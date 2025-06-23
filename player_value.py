@@ -1,79 +1,49 @@
+# player_value.py
+
 import pandas as pd
-import numpy as np
-import re
 
-# ---------------------------
-# Dynasty Player Valuation
-# ---------------------------
+RANKINGS_FILE = "dynasty_rankings.csv"
 
-rankings_df = pd.read_csv("dynasty_rankings.csv")
-rankings_df["name_clean"] = rankings_df["name"].str.lower().str.replace(r'[^a-z0-9]', '', regex=True)
+def load_rankings():
+    try:
+        df = pd.read_csv(RANKINGS_FILE)
+        df.fillna(0, inplace=True)
+        df["player_name_lower"] = df["player_name"].str.lower()
+        return df
+    except Exception as e:
+        print(f"Error loading rankings: {e}")
+        return pd.DataFrame(columns=["player_name", "dynasty_value", "overall_rank", "position_rank", "WAR", "OPS", "SLG", "OPS+"])
 
-def normalize_name(name: str) -> str:
-    return re.sub(r'[^a-z0-9]', '', name.lower())
 
-def get_player_rank(name: str):
-    name_clean = normalize_name(name)
-    match = rankings_df[rankings_df["name_clean"] == name_clean]
-    if not match.empty:
-        return match.iloc[0]
-    return None
+rankings_df = load_rankings()
 
-def get_dynasty_value(player, age: int = None, recent_score: float = None) -> float:
-    """
-    Calculate a player's dynasty value score.
-    Accepts either player object with 'name', 'stats', 'injuryStatus', etc. or just player name string.
-    """
-    if hasattr(player, 'name'):
-        name = player.name
-        age = getattr(getattr(player, 'player', None), 'age', age or 25)
-        stats = getattr(player, 'stats', {}).get('2025') or getattr(player, 'stats', {}).get('2024')
-        recent_score = stats.get('points', 0) if stats else (recent_score or 0)
-        is_prospect = "Minors" in getattr(player, 'injuryStatus', "") or getattr(player, 'is_injured_reserve', False)
-        prospect_bonus = 10 if is_prospect else 0
-    else:
-        name = player
-        age = age or 25
-        recent_score = recent_score or 0
-        prospect_bonus = 0
-
-    ranking = get_player_rank(name)
-    if ranking is None:
+def get_dynasty_value(player):
+    if not player or not hasattr(player, 'name'):
         return 0
-
-    rank_score = max(0, 300 - ranking["overall_rank"])
-    pos_score = max(0, 100 - ranking["pos_rank"])
-    age_score = max(0, (30 - age)) * 0.5
-    perf_score = recent_score * 0.5
-
-    return round(rank_score + pos_score + age_score + perf_score + prospect_bonus, 2)
-
-# ---------------------------
-# Draft Pick Valuation - Simple Mode
-# ---------------------------
-
-TOTAL_PICKS = 160
-PICKS_PER_ROUND = 10
-TOTAL_ROUNDS = 16
-
-def generate_value_curve():
-    values = []
-    for pick in range(1, TOTAL_PICKS + 1):
-        value = round(300 * (pick ** -0.35), 2)
-        values.append(value)
-    return values
-
-DRAFT_PICK_VALUE_LIST = generate_value_curve()
-
-ROUND_PICK_VALUES = {
-    round_num: round(np.mean(
-        DRAFT_PICK_VALUE_LIST[(round_num - 1) * PICKS_PER_ROUND: round_num * PICKS_PER_ROUND]
-    ), 2)
-    for round_num in range(1, TOTAL_ROUNDS + 1)
-}
+    name = player.name.lower()
+    match = rankings_df[rankings_df["player_name_lower"] == name]
+    if not match.empty:
+        return float(match.iloc[0]["dynasty_value"])
+    return 0
 
 def get_simple_draft_pick_value(pick):
-    """
-    Given a DraftPickSimple object with attribute round_number, return average value for that round.
-    """
-    return ROUND_PICK_VALUES.get(pick.round_number, 0)
+    # Simple declining pick value curve from 100 (1.01) to ~1 (16.10)
+    pick_num = (pick.round_number - 1) * 10 + 1  # assume 10 picks per round
+    return max(1, 100 - (pick_num - 1) * 0.6)  # Adjust decay as needed
+
+def get_player_ranks(name):
+    if not name:
+        return {}
+    match = rankings_df[rankings_df["player_name_lower"] == name.lower()]
+    if match.empty:
+        return {}
+    row = match.iloc[0]
+    return {
+        "Dynasty Value": row.get("dynasty_value", 0),
+        "Overall Rank": int(row.get("overall_rank", 9999)),
+        "Position Rank": int(row.get("position_rank", 9999)),
+        "WAR": row.get("WAR", 0),
+        "OPS": row.get("OPS", 0),
+        "SLG": row.get("SLG", 0),
+        "OPS+": row.get("OPS+", 0)
+    }
