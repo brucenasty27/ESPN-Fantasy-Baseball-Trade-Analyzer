@@ -3,7 +3,7 @@ numpy
 streamlit
 espn_api
 python-dotenv
-st-aggrid
 requests
 beautifulsoup4
 lxml
+streamlit-aggrid

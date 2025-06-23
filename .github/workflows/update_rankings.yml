@@ -23,6 +23,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Check Python version and installed packages
+        run: |
+          python --version
+          pip list
+
       - name: Run update_rankings script
         run: python update_rankings.py
 
@@ -31,7 +36,6 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add dynasty_rankings.csv
-          git commit -m "Automated update of dynasty_rankings.csv"
+          git diff --quiet && echo "No changes to commit" || git commit -m "Automated update of dynasty_rankings.csv"
           git push
         continue-on-error: true
-
