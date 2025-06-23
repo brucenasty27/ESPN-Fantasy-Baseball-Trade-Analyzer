@@ -63,7 +63,11 @@ def load_league():
         st.stop()
 
 def get_team_logo(team):
-    return getattr(team, "logo_url", "")
+    url = getattr(team, "logo_url", None)
+    if not url or not isinstance(url, str) or not url.startswith("http"):
+        # Provide a generic placeholder image if no valid logo URL found
+        return "https://upload.wikimedia.org/wikipedia/commons/a/ac/No_image_available.svg"
+    return url
 
 def calculate_trade_value(players, picks, pick_valuator=None, mode="simple", team_id=None):
     player_value = sum(get_dynasty_value(p.name) for p in players)
