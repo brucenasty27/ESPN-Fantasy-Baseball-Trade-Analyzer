@@ -1,26 +1,26 @@
 import streamlit as st
 from espn_api.baseball import League
-from player_value import get_dynasty_value, get_simple_draft_pick_value, get_player_ranks
+from player_value import get_dynasty_value, get_simple_draft_pick_value
 from draft_value import DraftPickValuator, DraftPick
 import datetime
 from dataclasses import dataclass
 import os
 from dotenv import load_dotenv
 import subprocess
-import requests
 import openai
 import pandas as pd
 
 # Load environment variables from .env file
 load_dotenv()
 
-# Environment variables validation
+# Validate environment variables
 try:
     LEAGUE_ID = int(os.getenv("LEAGUE_ID"))
     SEASON_YEAR = int(os.getenv("SEASON_YEAR"))
     SWID = os.getenv("SWID")
     ESPN_S2 = os.getenv("ESPN_S2")
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
     if not (SWID and ESPN_S2):
         raise ValueError("Missing SWID or ESPN_S2 tokens")
     if not OPENAI_API_KEY:
@@ -32,7 +32,7 @@ except Exception as e:
 openai.api_key = OPENAI_API_KEY
 
 st.set_page_config(page_title="Dynasty Trade Analyzer", layout="wide")
-st.title("\U0001F3C6 Dynasty Trade Analyzer with Draft Picks")
+st.title("🏆 Dynasty Trade Analyzer with Draft Picks")
 
 @dataclass
 class DraftPickSimple:
@@ -63,7 +63,7 @@ def load_league():
         st.stop()
 
 def get_team_logo(team):
-    return team.logo_url if hasattr(team, 'logo_url') else ""
+    return getattr(team, "logo_url", "")
 
 def calculate_trade_value(players, picks, pick_valuator=None, mode="simple", team_id=None):
     player_value = sum(get_dynasty_value(p.name) for p in players)
@@ -99,7 +99,6 @@ def ai_trade_verdict(team1_name, team2_name, players_1, players_2, value_1, valu
     except Exception as e:
         return f"AI verdict unavailable: {e}"
 
-# Load dynasty rankings once for player comparisons
 @st.cache_data()
 def load_rankings_csv():
     try:
@@ -112,7 +111,7 @@ def load_rankings_csv():
 
 rankings_df = load_rankings_csv()
 
-# Session state defaults
+# Initialize session state variables if not set
 for key in ["trade_from_team_1", "trade_from_team_2", "trade_picks_team_1_rounds", "trade_picks_team_2_rounds"]:
     if key not in st.session_state:
         st.session_state[key] = []
@@ -122,10 +121,11 @@ if "pick_value_mode" not in st.session_state:
 if "last_sync" not in st.session_state:
     st.session_state.last_sync = None
 
-# Sidebar UI
+# Sidebar for settings and controls
 with st.sidebar:
     st.header("Settings")
-    if st.button("\U0001F504 Refresh Dynasty Rankings Now"):
+
+    if st.button("🔄 Refresh Dynasty Rankings Now"):
         with st.spinner("Refreshing dynasty rankings..."):
             output = refresh_rankings()
             st.success("Dynasty rankings refreshed.")
@@ -140,15 +140,15 @@ with st.sidebar:
     )
     st.session_state.pick_value_mode = mode
 
-    if st.button("\U0001F504 Sync League Data Now"):
+    if st.button("🔄 Sync League Data Now"):
         with st.spinner("Syncing league data..."):
             st.cache_resource.clear()
             league = load_league()
             st.session_state.last_sync = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         st.success(f"✅ League data synced at {st.session_state.last_sync}")
 
-# Load league on start or reload
-if "league" not in st.session_state or st.session_state.get("last_sync") is None:
+# Load league at startup or after syncing
+if "league" not in st.session_state or st.session_state.last_sync is None:
     league = load_league()
     st.session_state.league = league
 else:
@@ -159,20 +159,24 @@ if st.session_state.last_sync:
 
 team_names = [team.team_name for team in league.teams]
 
-# Prepare DraftPickValuator if advanced mode enabled
+# Setup pick valuator if advanced mode selected
 pick_valuator = None
 if st.session_state.pick_value_mode == "advanced":
+    # Order teams by wins ascending to simulate draft order for valuation
     standings_team_ids = [team.team_id for team in sorted(league.teams, key=lambda t: t.wins)]
     pick_valuator = DraftPickValuator(standings_team_ids)
 
-# Tabs
+# Main tabs for app functionality
 tab_trade, tab_search, tab_compare = st.tabs(["Trade Analyzer", "Player Search", "Player Comparison"])
 
+# -- Trade Analyzer Tab --
 with tab_trade:
-    st.header("\U0001F91D Trade Analyzer")
+    st.header("🤝 Trade Analyzer")
+
     col1, col2 = st.columns(2)
     team_1_name = col1.selectbox("Select Team 1", team_names)
     team_2_name = col2.selectbox("Select Team 2", team_names, index=1)
+
     team_1 = next(t for t in league.teams if t.team_name == team_1_name)
     team_2 = next(t for t in league.teams if t.team_name == team_2_name)
 
@@ -200,11 +204,12 @@ with tab_trade:
     st.write(f"{team_1_name}: **{value_1:.2f}**")
     st.write(f"{team_2_name}: **{value_2:.2f}**")
 
-    max_val = max(value_1, value_2)
+    max_val = max(value_1, value_2) if max(value_1, value_2) > 0 else 1
     team1_pct = value_1 / max_val
     team2_pct = value_2 / max_val
+
     bar_html = f"""
-    <div style='display: flex; width: 100%; height: 30px; border: 1px solid #ddd;'>
+    <div style='display: flex; width: 100%; height: 30px; border: 1px solid #ddd; border-radius: 5px; overflow: hidden;'>
         <div style='width: {team1_pct * 100:.1f}%; background-color: #4caf50;'></div>
         <div style='width: {team2_pct * 100:.1f}%; background-color: #f44336;'></div>
     </div>
@@ -224,18 +229,21 @@ with tab_trade:
             st.markdown("### 🤖 Who Says No?")
             st.write(verdict)
 
+# -- Player Comparison Tab --
 with tab_compare:
     st.header("🔍 Player Comparison Tool")
+
     all_players = sorted(rankings_df["name"].unique())
     col1, col2 = st.columns(2)
+
     p1_name = col1.selectbox("Player 1", all_players)
     p2_name = col2.selectbox("Player 2", all_players, index=1)
 
     def get_player_stats(name):
-        row = rankings_df[rankings_df["name"] == name.lower()].squeeze()
+        row = rankings_df[rankings_df["name"] == name.lower()]
         if row.empty:
             return {}
-        return row.to_dict()
+        return row.squeeze().to_dict()
 
     stats1 = get_player_stats(p1_name)
     stats2 = get_player_stats(p2_name)
@@ -258,4 +266,3 @@ with tab_compare:
             st.markdown(row_html, unsafe_allow_html=True)
     else:
         st.warning("One or both players not found in rankings data.")
-

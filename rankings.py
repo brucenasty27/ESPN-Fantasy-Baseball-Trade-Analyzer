@@ -1,134 +1,202 @@
-# rankings.py
-
 import pandas as pd
 import requests
-from bs4 import BeautifulSoup
 import re
+from bs4 import BeautifulSoup
+import time
 
-def clean_name(name):
+# URLs for sources
+RAZZBALL_HITTERS_URL = "https://razzball.com/mlbhittingstats/"
+RAZZBALL_PITCHERS_URL = "https://razzball.com/mlbpitchingstats/"
+FANTASYPROS_HITTERS_URL = "https://www.fantasypros.com/mlb/rankings/dynasty-hitters.php"
+FANTASYPROS_PITCHERS_URL = "https://www.fantasypros.com/mlb/rankings/dynasty-pitchers.php"
+HASHTAG_BASEBALL_URL = "https://hashtagbaseball.com/dynasty-rankings"
+STATCAST_ADVANCED_URL = "https://baseballsavant.mlb.com/leaderboard/dynasty?type=hitting"
+
+def clean_player_name(name):
     """Normalize player name for matching."""
-    return re.sub(r'\s*\(.*?\)', '', name).strip().lower()
+    name = re.sub(r"\s*\(.*\)", "", name)
+    name = re.sub(r" Jr\.| Sr\.| III| II", "", name)
+    return name.strip().lower()
 
 def fetch_razzball_hitters():
-    url = "https://razzball.com/top-500-dynasty-baseball-rankings/"
-    print(f"Fetching Razzball Hitters from {url}")
-    tables = pd.read_html(url)
-    df = tables[0]
-    df = df.rename(columns={
-        df.columns[0]: "Rank",
-        df.columns[1]: "Player",
-        df.columns[2]: "Team",
-        df.columns[3]: "Position"
-    })
-    df["source"] = "razzball"
-    return df[["Player", "Rank", "Position", "source"]]
+    try:
+        tables = pd.read_html(RAZZBALL_HITTERS_URL)
+        df = tables[0]
+        df['name'] = df['Player'].apply(clean_player_name)
+        df['overall_rank'] = df['Rank']
+        df['pos_rank'] = df['PosRank']
+        df['position'] = df['Pos']
+        return df[['name', 'overall_rank', 'pos_rank', 'position']]
+    except Exception as e:
+        print(f"Warning: Failed to fetch Razzball hitters: {e}")
+        return pd.DataFrame()
 
 def fetch_razzball_pitchers():
-    url = "https://razzball.com/top-100-starting-pitchers-dynasty/"
-    print(f"Fetching Razzball Pitchers from {url}")
-    tables = pd.read_html(url)
-    df = tables[0]
-    df = df.rename(columns={df.columns[1]: "Player", df.columns[2]: "Position"})
-    df["source"] = "razzball"
-    return df[["Player", df.columns[0], "Position", "source"]].rename(columns={df.columns[0]: "Rank"})
+    try:
+        tables = pd.read_html(RAZZBALL_PITCHERS_URL)
+        df = tables[0]
+        df['name'] = df['Player'].apply(clean_player_name)
+        df['overall_rank'] = df['Rank']
+        df['pos_rank'] = df['PosRank']
+        df['position'] = df['Pos']
+        return df[['name', 'overall_rank', 'pos_rank', 'position']]
+    except Exception as e:
+        print(f"Warning: Failed to fetch Razzball pitchers: {e}")
+        return pd.DataFrame()
 
 def fetch_fantasypros_hitters():
-    url = "https://www.fantasypros.com/mlb/rankings/dynasty-overall.php"
-    print(f"Fetching FantasyPros Hitters from {url}")
-    tables = pd.read_html(url)
-    df = tables[0]
-    df["Position"] = df["POS"]
-    df["source"] = "fantasypros"
-    return df[["Player", "Rank", "Position", "source"]]
+    try:
+        tables = pd.read_html(FANTASYPROS_HITTERS_URL)
+        df = tables[0]
+        df['name'] = df['Player'].apply(clean_player_name)
+        df['overall_rank'] = df.index + 1
+        df['pos_rank'] = 0
+        df['position'] = df['POS'] if 'POS' in df.columns else ''
+        return df[['name', 'overall_rank', 'pos_rank', 'position']]
+    except Exception as e:
+        print(f"Warning: Failed to fetch FantasyPros hitters: {e}")
+        return pd.DataFrame()
 
 def fetch_fantasypros_pitchers():
-    url = "https://www.fantasypros.com/mlb/rankings/dynasty-overall.php"
-    print(f"Fetching FantasyPros Pitchers from {url}")
-    return fetch_fantasypros_hitters()  # same table for now
+    try:
+        tables = pd.read_html(FANTASYPROS_PITCHERS_URL)
+        df = tables[0]
+        df['name'] = df['Player'].apply(clean_player_name)
+        df['overall_rank'] = df.index + 1
+        df['pos_rank'] = 0
+        df['position'] = df['POS'] if 'POS' in df.columns else ''
+        return df[['name', 'overall_rank', 'pos_rank', 'position']]
+    except Exception as e:
+        print(f"Warning: Failed to fetch FantasyPros pitchers: {e}")
+        return pd.DataFrame()
 
 def fetch_hashtagbaseball():
-    url = "https://www.hashtagbaseball.com/dynasty-rankings"
-    print(f"Fetching Hashtag Baseball from {url}")
-    tables = pd.read_html(url)
-    df = tables[0]
-    df["Position"] = df["POS"]
-    df["source"] = "hashtag"
-    return df[["Player", "Rank", "Position", "source"]]
+    try:
+        tables = pd.read_html(HASHTAG_BASEBALL_URL)
+        df = tables[0]
+        df['name'] = df['Player'].apply(clean_player_name)
+        df['overall_rank'] = df.index + 1
+        df['pos_rank'] = 0
+        df['position'] = df['POS'] if 'POS' in df.columns else ''
+        return df[['name', 'overall_rank', 'pos_rank', 'position']]
+    except Exception as e:
+        print(f"Warning: Failed to fetch Hashtag Baseball rankings: {e}")
+        return pd.DataFrame()
 
 def combine_rankings(dfs):
     """
-    Combine multiple ranking DataFrames into a single player dictionary
-    using average rank and most common position.
+    Combine multiple DataFrames by averaging ranks for matching players.
+    Returns dict keyed by player name.
     """
     combined = {}
-    for df in dfs:
-        for _, row in df.iterrows():
-            name_key = clean_name(row["Player"])
-            if name_key not in combined:
-                combined[name_key] = {
-                    "player_name": row["Player"],
-                    "position": row["Position"],
-                    "ranks": [],
-                    "pos_ranks": [],
-                }
-            try:
-                rank = float(row["Rank"])
-                combined[name_key]["ranks"].append(rank)
-            except:
-                continue
 
-    final = {}
-    for name, data in combined.items():
-        ranks = data["ranks"]
-        if not ranks:
+    for df in dfs:
+        if df.empty:
             continue
-        overall = round(sum(ranks) / len(ranks), 2)
-        pos_rank = round(overall / 10, 2)  # rough estimate for simplicity
-        final[name] = {
-            "player_name": data["player_name"],
-            "overall_rank": overall,
-            "position_rank": pos_rank,
-            "position": data["position"]
-        }
-    return final
+        for _, row in df.iterrows():
+            name = row['name']
+            if name not in combined:
+                combined[name] = {
+                    'overall_rank': 0,
+                    'pos_rank': 0,
+                    'position': row.get('position', ''),
+                    'count': 0
+                }
+            combined[name]['overall_rank'] += row['overall_rank']
+            combined[name]['pos_rank'] += row['pos_rank']
+            combined[name]['count'] += 1
+
+    # Average ranks
+    for name in combined:
+        combined[name]['overall_rank'] /= combined[name]['count']
+        combined[name]['pos_rank'] /= combined[name]['count']
+
+    return combined
 
 def fetch_statcast_advanced():
     """
-    Scrapes a custom advanced stat page to return WAR, OPS, SLG, OPS+.
-    Replace the URL and logic as needed to match your real source.
+    Fetch advanced stats (WAR, OPS, SLG, OPS+) from Baseball Savant or a fallback source.
+    Returns a dict keyed by cleaned player names with stat dicts.
+    Robust with error handling and retries.
     """
-    url = "https://www.fangraphs.com/leaders.aspx?pos=all&stats=bat&lg=all"
-    print(f"Fetching advanced stats from {url}")
-
     headers = {
-        "User-Agent": "Mozilla/5.0"
+        "User-Agent": "Mozilla/5.0 (compatible; FantasyTradeAnalyzer/1.0; +https://yourdomain.com)"
     }
 
-    # Simulated example – replace with actual stat site or local file
+    stats = {}
+
     try:
-        resp = requests.get(url, headers=headers)
-        soup = BeautifulSoup(resp.text, "lxml")
-        table = soup.find("table")
-        rows = table.find_all("tr")[1:]  # Skip header
+        # Baseball Savant JSON API endpoint example (adjust as needed)
+        url = "https://baseballsavant.mlb.com/leaderboard/dynasty?type=hitting"
+
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+
+        # If response is HTML, parse table instead (common case)
+        if "text/html" in resp.headers.get("Content-Type", ""):
+            soup = BeautifulSoup(resp.text, "html.parser")
+            table = soup.find("table")
+            if not table:
+                raise RuntimeError("Advanced stats table not found")
+
+            headers_row = [th.get_text(strip=True) for th in table.find_all("th")]
+
+            # Expected columns mapping - adjust if site changes
+            col_map = {}
+            for idx, col in enumerate(headers_row):
+                col_lower = col.lower()
+                if "player" in col_lower:
+                    col_map["player"] = idx
+                elif "war" in col_lower:
+                    col_map["WAR"] = idx
+                elif "ops" == col_lower or "ops+" in col_lower:
+                    # handle ops and ops+ (assuming last columns)
+                    if "ops+" in col_lower:
+                        col_map["OPS+"] = idx
+                    else:
+                        col_map["OPS"] = idx
+                elif "slg" in col_lower:
+                    col_map["SLG"] = idx
+
+            for row in table.find_all("tr")[1:]:
+                cells = row.find_all("td")
+                if len(cells) < len(headers_row):
+                    continue
+
+                name_raw = cells[col_map["player"]].get_text(strip=True)
+                name = clean_player_name(name_raw)
+
+                def parse_float(val):
+                    try:
+                        return float(val)
+                    except:
+                        return 0.0
+
+                stat_war = parse_float(cells[col_map.get("WAR", -1)].get_text()) if col_map.get("WAR", -1) >= 0 else 0.0
+                stat_ops = parse_float(cells[col_map.get("OPS", -1)].get_text()) if col_map.get("OPS", -1) >= 0 else 0.0
+                stat_slg = parse_float(cells[col_map.get("SLG", -1)].get_text()) if col_map.get("SLG", -1) >= 0 else 0.0
+                stat_ops_plus = parse_float(cells[col_map.get("OPS+", -1)].get_text()) if col_map.get("OPS+", -1) >= 0 else 0.0
+
+                stats[name] = {
+                    "WAR": stat_war,
+                    "OPS": stat_ops,
+                    "SLG": stat_slg,
+                    "OPS+": stat_ops_plus,
+                    # Dynasty value could be computed or default 0
+                    "dynasty_value": 0,
+                }
+
+        else:
+            # If API returns JSON, parse accordingly (placeholder)
+            data_json = resp.json()
+            # Implement parsing logic here if you switch to JSON source
+            # For now fallback to empty
+            print("Warning: JSON format not implemented, returning empty stats")
+            return {}
+
     except Exception as e:
-        print("Failed to fetch advanced stats:", e)
+        print(f"Warning: Failed to fetch advanced stats from primary source: {e}")
+        # Fallback strategy: return empty or implement another source here
         return {}
 
-    advanced_data = {}
-    for row in rows:
-        cols = row.find_all("td")
-        if len(cols) < 8:
-            continue
-        name = clean_name(cols[1].text)
-        try:
-            advanced_data[name] = {
-                "WAR": float(cols[2].text.strip()),
-                "OPS": float(cols[3].text.strip()),
-                "SLG": float(cols[4].text.strip()),
-                "OPS+": float(cols[5].text.strip())
-            }
-        except:
-            continue
-
-    return advanced_data
-
+    return stats

@@ -1,42 +1,57 @@
 name: Update Dynasty Rankings
 
 on:
-  push:
-    paths:
-      - 'update_rankings.py'
-      - 'rankings.py'
-      - '.github/workflows/update_rankings.yml'
   schedule:
-    - cron: '0 6 * * *'  # Runs daily at 06:00 UTC
+    - cron: '0 6 * * *'  # Run daily at 6:00 AM UTC
+  workflow_dispatch:      # Manual trigger support
 
 jobs:
-  update_rankings:
+  update-rankings:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
-    - name: ⬇️ Checkout repository
-      uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-    - name: 🐍 Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.10
 
-    - name: 📦 Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-    - name: 🔄 Run update_rankings.py
-      run: python update_rankings.py
+      - name: Run update_rankings.py with retries and logging
+        id: update_rankings
+        run: |
+          set -e
+          max_attempts=3
+          attempt=1
+          until python update_rankings.py 2>&1 | tee update_rankings.log; do
+            echo "Attempt $attempt failed!"
+            if [ $attempt -ge $max_attempts ]; then
+              echo "Max attempts reached. Failing job."
+              exit 1
+            fi
+            attempt=$((attempt+1))
+            echo "Retrying in 15 seconds..."
+            sleep 15
+          done
+        shell: bash
 
-    - name: 📤 Commit updated dynasty_rankings.csv
-      run: |
-        git config user.name "GitHub Actions Bot"
-        git config user.email "actions@github.com"
-        git add dynasty_rankings.csv
-        git commit -m "🔄 Auto-update dynasty_rankings.csv"
-        git push
-      env:
-        # GitHub token automatically provided for authenticated pushes
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload update_rankings logs
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: update_rankings_logs
+          path: update_rankings.log
+
+      - name: Upload dynasty_rankings.csv
+        if: success()
+        uses: actions/upload-artifact@v3
+        with:
+          name: dynasty_rankings_csv
+          path: dynasty_rankings.csv
