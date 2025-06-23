@@ -3,7 +3,7 @@ name: 🔄 Update Dynasty Rankings
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 12 * * 1'  # Every Monday at 12:00 UTC
+    - cron: '0 11 * * *'  # Every day at 4:00 AM MST (11:00 UTC)
 
 jobs:
   update-rankings:
@@ -16,7 +16,7 @@ jobs:
       - name: 📥 Checkout Repo
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Required for pushing changes and creating PRs
+          fetch-depth: 0
 
       - name: 🛠️ Set up Python
         uses: actions/setup-python@v5
@@ -43,22 +43,30 @@ jobs:
             echo "no_changes=true" >> $GITHUB_OUTPUT
           else
             echo "no_changes=false" >> $GITHUB_OUTPUT
-          fi
 
       - name: ✅ Commit and Push Rankings Update
         if: steps.git-check.outputs.no_changes == 'false'
         run: |
-          git commit -m "🔄 Weekly dynasty rankings update"
+          git commit -m "🔄 Daily dynasty rankings update"
           git push origin main
 
       - name: 📬 Create Pull Request (if needed)
         if: steps.git-check.outputs.no_changes == 'false'
+        id: cpr
         uses: peter-evans/create-pull-request@v6
         with:
-          commit-message: "🔄 Weekly dynasty rankings update"
+          commit-message: "🔄 Daily dynasty rankings update"
           branch: auto/update-rankings
-          title: "🔄 Weekly Dynasty Rankings Update"
+          title: "🔄 Daily Dynasty Rankings Update"
           body: |
             This PR contains the latest dynasty rankings pulled automatically.
             Please review and merge if everything looks good.
           base: main
+          delete-branch: true
+
+      - name: 🤖 Enable Auto-Merge
+        if: steps.git-check.outputs.no_changes == 'false'
+        uses: peter-evans/enable-pull-request-automerge@v3
+        with:
+          pull-request-number: ${{ steps.cpr.outputs.pull-request-number }}
+          merge-method: rebase

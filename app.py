@@ -63,11 +63,11 @@ def load_league():
         st.stop()
 
 def get_team_logo(team):
-    url = getattr(team, "logo_url", None)
-    if not url or not isinstance(url, str) or not url.startswith("http"):
-        # Provide a generic placeholder image if no valid logo URL found
-        return "https://upload.wikimedia.org/wikipedia/commons/a/ac/No_image_available.svg"
-    return url
+    logo = getattr(team, "logo_url", "")
+    if not logo:
+        # fallback placeholder for missing logos
+        logo = "https://via.placeholder.com/75?text=No+Logo"
+    return logo
 
 def calculate_trade_value(players, picks, pick_valuator=None, mode="simple", team_id=None):
     player_value = sum(get_dynasty_value(p.name) for p in players)
@@ -105,13 +105,15 @@ def ai_trade_verdict(team1_name, team2_name, players_1, players_2, value_1, valu
 
 @st.cache_data()
 def load_rankings_csv():
+    file = "dynasty_rankings_cleaned.csv"
     try:
-        df = pd.read_csv("dynasty_rankings.csv")
-        df["name"] = df["name"].str.strip().str.lower()
+        df = pd.read_csv(file)
+        df["name"] = df["name"].astype(str).str.strip().str.lower()
         return df
     except Exception as e:
-        st.warning(f"Failed to load dynasty_rankings.csv: {e}")
+        st.warning(f"⚠️ Failed to load {file}: {e}")
         return pd.DataFrame()
+
 
 rankings_df = load_rankings_csv()
 
@@ -166,9 +168,25 @@ team_names = [team.team_name for team in league.teams]
 # Setup pick valuator if advanced mode selected
 pick_valuator = None
 if st.session_state.pick_value_mode == "advanced":
-    # Order teams by wins ascending to simulate draft order for valuation
     standings_team_ids = [team.team_id for team in sorted(league.teams, key=lambda t: t.wins)]
     pick_valuator = DraftPickValuator(standings_team_ids)
+
+# Prepare draft pick options with detailed names for UI
+def pick_suffix(n):
+    return {1: "st", 2: "nd", 3: "rd"}.get(n if n < 20 else 0, "th")
+
+draft_pick_options = [f"{NEXT_DRAFT_YEAR} {rnd}{pick_suffix(rnd)} Round Pick" for rnd in range(1, DRAFT_ROUNDS + 1)]
+
+def parse_pick_string(pick_str):
+    # expects format like '2026 1st Round Pick'
+    parts = pick_str.split()
+    round_str = parts[1]
+    # remove suffix (st, nd, rd, th) from round
+    for suffix in ["st", "nd", "rd", "th"]:
+        if round_str.endswith(suffix):
+            round_str = round_str[:-len(suffix)]
+            break
+    return int(round_str)
 
 # Main tabs for app functionality
 tab_trade, tab_search, tab_compare = st.tabs(["Trade Analyzer", "Player Search", "Player Comparison"])
@@ -193,13 +211,15 @@ with tab_trade:
     trade_from_team_1 = st.multiselect("Players from Team 1", list(roster_1.keys()))
     trade_from_team_2 = st.multiselect("Players from Team 2", list(roster_2.keys()))
 
-    draft_picks_team_1 = st.multiselect("Team 1 Draft Pick Rounds", list(range(1, DRAFT_ROUNDS + 1)))
-    draft_picks_team_2 = st.multiselect("Team 2 Draft Pick Rounds", list(range(1, DRAFT_ROUNDS + 1)))
+    draft_picks_team_1 = st.multiselect("Team 1 Draft Picks", options=draft_pick_options)
+    draft_picks_team_2 = st.multiselect("Team 2 Draft Picks", options=draft_pick_options)
 
     players_1 = [roster_1[name] for name in trade_from_team_1]
     players_2 = [roster_2[name] for name in trade_from_team_2]
-    picks_1 = [DraftPickSimple(r, NEXT_DRAFT_YEAR) for r in draft_picks_team_1]
-    picks_2 = [DraftPickSimple(r, NEXT_DRAFT_YEAR) for r in draft_picks_team_2]
+
+    # Convert selected draft pick strings back to DraftPickSimple objects
+    picks_1 = [DraftPickSimple(parse_pick_string(pick_str), NEXT_DRAFT_YEAR) for pick_str in draft_picks_team_1]
+    picks_2 = [DraftPickSimple(parse_pick_string(pick_str), NEXT_DRAFT_YEAR) for pick_str in draft_picks_team_2]
 
     value_1 = calculate_trade_value(players_1, picks_1, pick_valuator, st.session_state.pick_value_mode, team_1.team_id)
     value_2 = calculate_trade_value(players_2, picks_2, pick_valuator, st.session_state.pick_value_mode, team_2.team_id)
@@ -244,6 +264,8 @@ with tab_compare:
     p2_name = col2.selectbox("Player 2", all_players, index=1)
 
     def get_player_stats(name):
+        if not name:
+            return {}
         row = rankings_df[rankings_df["name"] == name.lower()]
         if row.empty:
             return {}
