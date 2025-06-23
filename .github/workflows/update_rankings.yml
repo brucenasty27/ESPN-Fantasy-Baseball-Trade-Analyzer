@@ -34,3 +34,4 @@ jobs:
           git commit -m "Automated update of dynasty_rankings.csv"
           git push
         continue-on-error: true
+
