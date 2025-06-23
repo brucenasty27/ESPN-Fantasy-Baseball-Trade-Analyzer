@@ -1,19 +1,27 @@
-# 🎈 Blank app template
+# 🧢 Dynasty Fantasy Baseball Trade Analyzer
 
-A simple Streamlit app template for you to modify!
+A powerful, Streamlit-based web app for analyzing dynasty league trades in your ESPN Fantasy Baseball league. Sync your league, compare players and picks, and get dynasty-focused evaluations with AI-assisted insights.
 
-[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://blank-app-template.streamlit.app/)
+![Streamlit UI Screenshot](https://via.placeholder.com/800x400.png?text=Your+App+Screenshot+Here)
 
-### How to run it on your own machine
+---
 
-1. Install the requirements
+## ⚙️ Features
 
-   ```
-   $ pip install -r requirements.txt
-   ```
+- 🔄 **ESPN League Sync** – Pulls rosters, teams, and players automatically
+- ⚖️ **Dynasty Trade Evaluator** – Considers age, stats, prospect status, and consensus rankings
+- 📊 **Live Rankings Integration** – Scrapes latest rankings from Razzball and FantasyPros
+- 🎯 **AI “Who Says No?” Mode** – Get smart, dynasty-weighted trade explanations
+- 🧠 **Draft Pick Support** – Include draft picks in trades (1st–16th round supported)
+- 📆 **Automated Weekly Updates** – Rankings updated via GitHub Actions
+- 📤 **Discord-Ready** – Optional webhook integration to notify league
 
-2. Run the app
+---
 
-   ```
-   $ streamlit run streamlit_app.py
-   ```
+## 🚀 Getting Started
+
+### 1. Clone the Repo
+
+```bash
+git clone https://github.com/your-username/espn-fantasy-baseball-trade-analyzer.git
+cd espn-fantasy-baseball-trade-analyzer
