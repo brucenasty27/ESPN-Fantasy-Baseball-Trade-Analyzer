@@ -6,15 +6,12 @@ import datetime
 from dataclasses import dataclass
 import os
 from dotenv import load_dotenv
-import pandas as pd
 import subprocess
 
-from st_aggrid import AgGrid, GridOptionsBuilder, DataReturnMode, GridUpdateMode
-
-# Load environment variables
+# Load environment variables from .env file
 load_dotenv()
 
-# --- Validate environment variables ---
+# Environment variables validation
 try:
     LEAGUE_ID = int(os.getenv("LEAGUE_ID"))
     SEASON_YEAR = int(os.getenv("SEASON_YEAR"))
@@ -25,45 +22,6 @@ try:
 except Exception as e:
     st.error(f"Error loading environment variables: {e}")
     st.stop()
-
-# --- Custom CSS ---
-def local_css():
-    css = """
-    .stButton > button {
-        border-radius: 12px;
-        padding: 0.5rem 1rem;
-        font-weight: 600;
-    }
-    .player-card {
-        display:flex; align-items:center; gap:10px; margin-bottom:8px;
-        border: 1px solid #eee; padding: 5px; border-radius: 8px;
-        background-color: #f9f9f9;
-        width: 250px;
-        cursor: pointer;
-        transition: box-shadow 0.3s ease;
-    }
-    .player-card:hover {
-        box-shadow: 0 4px 8px rgba(0,0,0,0.12);
-        background-color: #fff;
-    }
-    .player-card img {
-        width:48px; height:48px; border-radius: 50%;
-    }
-    .trade-bar {
-        display:flex; height:24px; width:100%; border-radius: 12px; overflow:hidden; margin-bottom:10px; border:1px solid #ccc;
-    }
-    .trade-bar-left {
-        transition: width 0.5s;
-        background-color: #4caf50;
-    }
-    .trade-bar-right {
-        transition: width 0.5s;
-        background-color: #f44336;
-    }
-    """
-    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
-
-local_css()
 
 st.set_page_config(page_title="Dynasty Trade Analyzer", layout="wide")
 st.title("🏆 Dynasty Trade Analyzer with Draft Picks")
@@ -99,13 +57,11 @@ def load_league():
         st.error(f"Failed to load league: {e}")
         st.stop()
 
-# Helper: team logo URL
 def get_team_logo(team):
     if hasattr(team, "team_id") and team.team_id:
         return f"https://a.espncdn.com/i/teamlogos/mlb/500/{team.team_id}.png"
     return ""
 
-# Trade value calculation logic with mode
 def calculate_trade_value(players, picks, pick_valuator=None, mode="simple", team_id=None):
     player_value = sum(get_dynasty_value(p) for p in players)
     if mode == "advanced" and pick_valuator and team_id is not None:
@@ -114,9 +70,6 @@ def calculate_trade_value(players, picks, pick_valuator=None, mode="simple", tea
         picks_value = sum(get_simple_draft_pick_value(p) for p in picks)
     return player_value + picks_value
 
-# Verdict and negotiation functions unchanged (can be copied as is)...
-
-# Add Refresh Rankings button
 def refresh_rankings():
     try:
         result = subprocess.run(["python", "update_rankings.py"], capture_output=True, text=True, check=True)
@@ -124,7 +77,7 @@ def refresh_rankings():
     except subprocess.CalledProcessError as e:
         return f"Error refreshing rankings: {e.stderr}"
 
-# Initialize session state for trade selections and mode
+# Session state defaults
 if "trade_from_team_1" not in st.session_state:
     st.session_state.trade_from_team_1 = []
 if "trade_from_team_2" not in st.session_state:
@@ -138,7 +91,7 @@ if "pick_value_mode" not in st.session_state:
 if "last_sync" not in st.session_state:
     st.session_state.last_sync = None
 
-# UI: Refresh rankings
+# Sidebar UI
 with st.sidebar:
     st.header("Settings")
     if st.button("🔄 Refresh Dynasty Rankings Now"):
@@ -146,6 +99,7 @@ with st.sidebar:
             output = refresh_rankings()
             st.success("Dynasty rankings refreshed.")
             st.text(output)
+
     st.markdown("---")
     mode = st.selectbox(
         "Draft Pick Valuation Mode",
@@ -155,15 +109,19 @@ with st.sidebar:
     )
     st.session_state.pick_value_mode = mode
 
-# Load league
-if st.button("🔄 Sync League Data Now"):
-    with st.spinner("Syncing league data..."):
-        st.cache_resource.clear()
-        league = load_league()
-        st.session_state.last_sync = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    st.success(f"✅ League data synced at {st.session_state.last_sync}")
-else:
+    if st.button("🔄 Sync League Data Now"):
+        with st.spinner("Syncing league data..."):
+            st.cache_resource.clear()
+            league = load_league()
+            st.session_state.last_sync = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        st.success(f"✅ League data synced at {st.session_state.last_sync}")
+
+# Load league on start or reload
+if "league" not in st.session_state or st.session_state.get("last_sync") is None:
     league = load_league()
+    st.session_state.league = league
+else:
+    league = st.session_state.league
 
 if st.session_state.last_sync:
     st.caption(f"Last synced: {st.session_state.last_sync}")
@@ -173,13 +131,12 @@ team_names = [team.team_name for team in league.teams]
 # Prepare DraftPickValuator if advanced mode enabled
 pick_valuator = None
 if st.session_state.pick_value_mode == "advanced":
-    # standings assumed from worst (last place) to best (champion) - adapt if needed
+    # Worst to best team_ids based on wins (lowest first)
     standings_team_ids = [team.team_id for team in sorted(league.teams, key=lambda t: t.wins)]
     pick_valuator = DraftPickValuator(standings_team_ids)
 
 tab_trade, tab_search = st.tabs(["Trade Analyzer", "Player Search"])
 
-# TRADE ANALYZER TAB
 with tab_trade:
     st.header("🤝 Trade Analyzer")
 
@@ -192,7 +149,7 @@ with tab_trade:
     team_1 = next(t for t in league.teams if t.team_name == selected_team_1)
     team_2 = next(t for t in league.teams if t.team_name == selected_team_2)
 
-    col1, col2 = st.columns([1,1])
+    col1, col2 = st.columns([1, 1])
     with col1:
         st.image(get_team_logo(team_1), width=75)
         st.markdown(f"### {selected_team_1}")
@@ -242,17 +199,40 @@ with tab_trade:
     st.session_state.trade_picks_team_2_rounds = trade_picks_team_2_rounds
     trade_picks_team_2 = [DraftPickSimple(r, NEXT_DRAFT_YEAR) for r in trade_picks_team_2_rounds]
 
-    # Player cards and display omitted here for brevity, copy existing functions.
-
-    # Prepare players lists
+    # Prepare player lists
     team_1_players = [team_1_roster[name] for name in trade_from_team_1]
     team_2_players = [team_2_roster[name] for name in trade_from_team_2]
 
-    # Calculate trade values using selected mode
+    # Calculate trade values based on mode
     team_1_value = calculate_trade_value(team_1_players, trade_picks_team_1, pick_valuator, st.session_state.pick_value_mode, team_1.team_id)
     team_2_value = calculate_trade_value(team_2_players, trade_picks_team_2, pick_valuator, st.session_state.pick_value_mode, team_2.team_id)
 
-    # Remaining UI and trade verdict logic as before...
+    # Show summary and verdict
+    st.markdown(f"### Trade Value Summary")
+    st.write(f"Team 1 Value: **{team_1_value:.2f}**")
+    st.write(f"Team 2 Value: **{team_2_value:.2f}**")
 
-# PLAYER SEARCH TAB unchanged...
+    if team_1_value > team_2_value:
+        st.success("Trade favors Team 1")
+    elif team_2_value > team_1_value:
+        st.success("Trade favors Team 2")
+    else:
+        st.info("Trade values are balanced")
 
+with tab_search:
+    st.header("🔍 Player Search")
+    query = st.text_input("Search player by name")
+
+    if query:
+        lower_query = query.lower()
+        matching_players = []
+        for team in league.teams:
+            for player in team.roster:
+                if lower_query in player.name.lower():
+                    matching_players.append(player)
+        if matching_players:
+            for p in matching_players:
+                value = get_dynasty_value(p)
+                st.write(f"**{p.name}** - Dynasty Value: {value}")
+        else:
+            st.write("No matching players found.")

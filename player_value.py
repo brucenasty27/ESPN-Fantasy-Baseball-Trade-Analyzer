@@ -1,5 +1,3 @@
-# player_value.py
-
 import pandas as pd
 import numpy as np
 import re
@@ -22,6 +20,10 @@ def get_player_rank(name: str):
     return None
 
 def get_dynasty_value(player, age: int = None, recent_score: float = None) -> float:
+    """
+    Calculate a player's dynasty value score.
+    Accepts either player object with 'name', 'stats', 'injuryStatus', etc. or just player name string.
+    """
     if hasattr(player, 'name'):
         name = player.name
         age = getattr(getattr(player, 'player', None), 'age', age or 25)
@@ -71,4 +73,7 @@ ROUND_PICK_VALUES = {
 }
 
 def get_simple_draft_pick_value(pick):
+    """
+    Given a DraftPickSimple object with attribute round_number, return average value for that round.
+    """
     return ROUND_PICK_VALUES.get(pick.round_number, 0)

@@ -1,5 +1,9 @@
+pandas
+numpy
 streamlit
 espn_api
-pandas
 python-dotenv
-streamlit-aggrid
+st-aggrid
+requests
+beautifulsoup4
+lxml
