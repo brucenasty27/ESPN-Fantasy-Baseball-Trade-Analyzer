@@ -1,0 +1,36 @@
+name: Update Rankings
+
+on:
+  schedule:
+    - cron: '0 12 * * 1'  # every Monday at 12:00 UTC
+  workflow_dispatch:       # manual trigger
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.10
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run update_rankings script
+        run: python update_rankings.py
+
+      - name: Commit and push updated rankings CSV
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add dynasty_rankings.csv
+          git commit -m "Automated update of dynasty_rankings.csv"
+          git push
+        continue-on-error: true
