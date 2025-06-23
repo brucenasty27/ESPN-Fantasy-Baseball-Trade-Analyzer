@@ -3,3 +3,4 @@ espn-api
 beautifulsoup4
 pandas
 requests
+python-dotenv
