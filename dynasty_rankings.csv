@@ -1,11 +1,1 @@
-name,overall_rank,pos_rank,position
-Ronald Acuna Jr.,1,1,OF
-Juan Soto,2,2,OF
-Julio Rodriguez,3,3,OF
-Bobby Witt Jr.,4,1,SS
-Corbin Carroll,5,4,OF
-Shohei Ohtani,6,1,UTIL
-Spencer Strider,7,1,SP
-Gunnar Henderson,8,2,SS
-Fernando Tatis Jr.,9,5,OF
-Mookie Betts,10,6,OF
+name,overall_rank,pos_rank,position,dynasty_value,WAR,OPS,SLG,OPS+
