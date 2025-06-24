@@ -43,12 +43,13 @@ jobs:
             echo "no_changes=true" >> $GITHUB_OUTPUT
           else
             echo "no_changes=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: ✅ Commit and Push Rankings Update
         if: steps.git-check.outputs.no_changes == 'false'
         run: |
           git commit -m "🔄 Daily dynasty rankings update"
-          git push origin main
+          git push origin auto/update-rankings
 
       - name: 📬 Create Pull Request (if needed)
         if: steps.git-check.outputs.no_changes == 'false'

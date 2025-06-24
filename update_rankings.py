@@ -9,7 +9,9 @@ from rankings import (
     combine_rankings
 )
 
-def write_csv(rankings, filename='dynasty_rankings.csv'):
+OUTPUT_CSV = "dynasty_rankings.csv"
+
+def write_csv(rankings, filename=OUTPUT_CSV):
     """
     Write the combined rankings dictionary to a CSV file.
     """
@@ -18,7 +20,6 @@ def write_csv(rankings, filename='dynasty_rankings.csv'):
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
         for player_name, player_data in rankings.items():
-            # Defensive fallback to ensure all fields exist
             row = {
                 'name': player_name,
                 'overall_rank': player_data.get('overall_rank', 9999),
@@ -64,10 +65,10 @@ def update_rankings():
     except Exception as e:
         print(f"Warning: Exception while fetching advanced stats: {e}")
 
-    # Merge advanced stats into combined
+    # Merge advanced stats into combined rankings
     for player_name in combined:
-        key = player_name.lower()
-        adv = advanced_stats.get(key, {})
+        # Defensive: Use lowercase player_name for advanced stats lookup
+        adv = advanced_stats.get(player_name.lower(), {})
         combined[player_name].update({
             'WAR': adv.get('WAR', 0),
             'OPS': adv.get('OPS', 0),
@@ -76,7 +77,7 @@ def update_rankings():
             'dynasty_value': adv.get('dynasty_value', 0),
         })
 
-    print("💾 Saving combined rankings with advanced stats to dynasty_rankings.csv...")
+    print(f"💾 Saving combined rankings with advanced stats to {OUTPUT_CSV}...")
     write_csv(combined)
     print("✅ Rankings updated successfully!")
 
