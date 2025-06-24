@@ -41,7 +41,9 @@ class DraftPickSimple:
     year: int
 
     def __str__(self):
-        suffix = {1: "st", 2: "nd", 3: "rd"}.get(self.round_number, "th")
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(
+            self.round_number if self.round_number < 20 else 0, "th"
+        )
         return f"{self.year} {self.round_number}{suffix} Round Pick"
 
 DRAFT_ROUNDS = 16
@@ -62,18 +64,14 @@ def load_league():
         st.stop()
 
 def get_team_logo(team):
-    try:
-        logo = getattr(team, "logo_url", None)
-        if not logo:
-            raise AttributeError
-        return logo
-    except Exception:
+    logo = getattr(team, "logo_url", "")
+    if not logo:
         # fallback placeholder for missing logos
-        return "https://via.placeholder.com/75?text=No+Logo"
+        logo = "https://via.placeholder.com/75?text=No+Logo"
+    return logo
 
 def calculate_trade_value(players, picks, pick_valuator=None, mode="simple", team_id=None):
-    # Normalize player names for dynasty value lookup
-    player_value = sum(get_dynasty_value(p.name.lower().strip()) for p in players)
+    player_value = sum(get_dynasty_value(p.name) for p in players)
     if mode == "advanced" and pick_valuator and team_id is not None:
         picks_value = sum(pick_valuator.get_pick_value(team_id, p.round_number) for p in picks)
     else:
@@ -94,7 +92,7 @@ def ai_trade_verdict(team1_name, team2_name, players_1, players_2, value_1, valu
         msg += f"Team 1 value: {value_1:.2f}, Team 2 value: {value_2:.2f}. Who wins the trade? Suggest fair modifications if any."
 
         response = openai_client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": "You are a fantasy baseball expert analyzing trade fairness."},
                 {"role": "user", "content": msg}
@@ -104,12 +102,11 @@ def ai_trade_verdict(team1_name, team2_name, players_1, players_2, value_1, valu
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        st.error(f"OpenAI API call failed: {e}")
         return f"AI verdict unavailable: {e}"
 
 @st.cache_data()
 def load_rankings_csv():
-    file = os.path.join("data", "dynasty_rankings_cleaned.csv")
+    file = "data/dynasty_rankings_cleaned.csv"
     if not os.path.exists(file):
         st.warning(f"⚠️ Missing {file}. Please run the ranking update workflow.")
         return pd.DataFrame(columns=["name"])
@@ -126,7 +123,7 @@ def load_rankings_csv():
 rankings_df = load_rankings_csv()
 
 # Initialize session state variables if not set
-for key in ["trade_from_team_1", "trade_from_team_2", "trade_picks_team_1", "trade_picks_team_2"]:
+for key in ["trade_from_team_1", "trade_from_team_2", "trade_picks_team_1_rounds", "trade_picks_team_2_rounds"]:
     if key not in st.session_state:
         st.session_state[key] = []
 
@@ -179,8 +176,9 @@ if st.session_state.pick_value_mode == "advanced":
     standings_team_ids = [team.team_id for team in sorted(league.teams, key=lambda t: t.wins)]
     pick_valuator = DraftPickValuator(standings_team_ids)
 
+# Prepare draft pick options with detailed names for UI
 def pick_suffix(n):
-    return {1: "st", 2: "nd", 3: "rd"}.get(n, "th")
+    return {1: "st", 2: "nd", 3: "rd"}.get(n if n < 20 else 0, "th")
 
 draft_pick_options = [f"{NEXT_DRAFT_YEAR} {rnd}{pick_suffix(rnd)} Round Pick" for rnd in range(1, DRAFT_ROUNDS + 1)]
 
@@ -188,6 +186,7 @@ def parse_pick_string(pick_str):
     # expects format like '2026 1st Round Pick'
     parts = pick_str.split()
     round_str = parts[1]
+    # remove suffix (st, nd, rd, th) from round
     for suffix in ["st", "nd", "rd", "th"]:
         if round_str.endswith(suffix):
             round_str = round_str[:-len(suffix)]
@@ -211,9 +210,8 @@ with tab_trade:
     col1.image(get_team_logo(team_1), width=75)
     col2.image(get_team_logo(team_2), width=75)
 
-    # Normalize roster dict keys
-    roster_1 = {p.name.lower().strip(): p for p in team_1.roster}
-    roster_2 = {p.name.lower().strip(): p for p in team_2.roster}
+    roster_1 = {p.name: p for p in team_1.roster}
+    roster_2 = {p.name: p for p in team_2.roster}
 
     trade_from_team_1 = st.multiselect("Players from Team 1", list(roster_1.keys()))
     trade_from_team_2 = st.multiselect("Players from Team 2", list(roster_2.keys()))
@@ -221,9 +219,10 @@ with tab_trade:
     draft_picks_team_1 = st.multiselect("Team 1 Draft Picks", options=draft_pick_options)
     draft_picks_team_2 = st.multiselect("Team 2 Draft Picks", options=draft_pick_options)
 
-    players_1 = [roster_1[name.lower().strip()] for name in trade_from_team_1]
-    players_2 = [roster_2[name.lower().strip()] for name in trade_from_team_2]
+    players_1 = [roster_1[name] for name in trade_from_team_1]
+    players_2 = [roster_2[name] for name in trade_from_team_2]
 
+    # Convert selected draft pick strings back to DraftPickSimple objects
     picks_1 = [DraftPickSimple(parse_pick_string(pick_str), NEXT_DRAFT_YEAR) for pick_str in draft_picks_team_1]
     picks_2 = [DraftPickSimple(parse_pick_string(pick_str), NEXT_DRAFT_YEAR) for pick_str in draft_picks_team_2]
 
