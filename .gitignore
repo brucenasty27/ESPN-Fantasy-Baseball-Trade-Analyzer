@@ -1,28 +1,35 @@
-# Python
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
-*.egg-info/
-*.log
+*$py.class
 
-# Jupyter / VSCode
-.ipynb_checkpoints/
+# Environment variables
+.env
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# macOS
+.DS_Store
+
+# VS Code
 .vscode/
 
-# Data files
-*.csv
-!dynasty_rankings_cleaned.csv  # Track only the final combined CSV
-
-# Environment
-.env
-.env.*
-
-# OS
-.DS_Store
-Thumbs.db
-
 # Streamlit cache
-.cache/
 .streamlit/
 
-# GitHub Actions
-.github/workflows/__pycache__/
+# Ignore all data directory contents except .keep
+data/*
+!data/.keep
+
+# Ignore compiled rankings
+dynasty_rankings_cleaned.csv
+
+# Python virtual environments
+.venv/
+venv/
+
+# Test and debug artifacts
+*.log
+*.tmp
+*.bak
