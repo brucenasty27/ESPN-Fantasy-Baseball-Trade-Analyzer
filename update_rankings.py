@@ -1,85 +1,48 @@
-import csv
-from rankings import (
-    fetch_razzball_hitters,
-    fetch_razzball_pitchers,
-    fetch_fantasypros_hitters,
-    fetch_fantasypros_pitchers,
-    fetch_hashtagbaseball,
-    fetch_statcast_advanced,
-    combine_rankings
-)
+# update_rankings.py
 
-OUTPUT_CSV = "dynasty_rankings.csv"
+import rankings
+import sys
 
-def write_csv(rankings, filename=OUTPUT_CSV):
-    """
-    Write the combined rankings dictionary to a CSV file.
-    """
-    with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
-        fieldnames = ['name', 'overall_rank', 'pos_rank', 'position', 'dynasty_value', 'WAR', 'OPS', 'SLG', 'OPS+']
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
-        for player_name, player_data in rankings.items():
-            row = {
-                'name': player_name,
-                'overall_rank': player_data.get('overall_rank', 9999),
-                'pos_rank': player_data.get('pos_rank', 9999),
-                'position': player_data.get('position', ''),
-                'dynasty_value': player_data.get('dynasty_value', 0),
-                'WAR': player_data.get('WAR', 0),
-                'OPS': player_data.get('OPS', 0),
-                'SLG': player_data.get('SLG', 0),
-                'OPS+': player_data.get('OPS+', 0),
-            }
-            writer.writerow(row)
+def main():
+    print("🔄 Starting dynasty rankings update...")
 
-def update_rankings():
-    print("🔄 Fetching dynasty rankings from multiple sources...")
-
-    sources = [
-        fetch_razzball_hitters,
-        fetch_razzball_pitchers,
-        fetch_fantasypros_hitters,
-        fetch_fantasypros_pitchers,
-        fetch_hashtagbaseball,
-    ]
-
-    dfs = []
-    for source_func in sources:
-        try:
-            df = source_func()
-            if not df.empty:
-                dfs.append(df)
-            else:
-                print(f"Warning: {source_func.__name__} returned empty dataframe.")
-        except Exception as e:
-            print(f"Warning: Exception while fetching from {source_func.__name__}: {e}")
-
-    print("📊 Combining rankings...")
-    combined = combine_rankings(dfs)
-
-    print("📈 Fetching advanced stats...")
-    advanced_stats = {}
     try:
-        advanced_stats = fetch_statcast_advanced()
+        print("Fetching Razzball hitters...")
+        hitters_rb = rankings.fetch_razzball_hitters()
+
+        print("Fetching Razzball pitchers...")
+        pitchers_rb = rankings.fetch_razzball_pitchers()
+
+        print("Fetching FantasyPros hitters...")
+        hitters_fp = rankings.fetch_fantasypros_hitters()
+
+        print("Fetching FantasyPros pitchers...")
+        pitchers_fp = rankings.fetch_fantasypros_pitchers()
+
+        print("Fetching Hashtag Baseball rankings...")
+        hashtag = rankings.fetch_hashtagbaseball()
+
+        # Combine all sources
+        print("Combining rankings...")
+        combined = rankings.combine_rankings([hitters_rb, pitchers_rb, hitters_fp, pitchers_fp, hashtag])
+
+        # Fetch advanced stats
+        print("Fetching advanced stats (WAR, OPS, SLG, OPS+)...")
+        advanced = rankings.fetch_statcast_advanced()
+
+        # Merge advanced stats into combined rankings
+        print("Merging advanced stats into combined rankings...")
+        combined_with_stats = rankings.merge_advanced_stats(combined, advanced)
+
+        # Export final combined rankings CSV
+        print("Exporting combined rankings to dynasty_rankings_cleaned.csv...")
+        rankings.export_combined_rankings_to_csv(combined_with_stats)
+
+        print("✅ Dynasty rankings update completed successfully!")
+
     except Exception as e:
-        print(f"Warning: Exception while fetching advanced stats: {e}")
-
-    # Merge advanced stats into combined rankings
-    for player_name in combined:
-        # Defensive: Use lowercase player_name for advanced stats lookup
-        adv = advanced_stats.get(player_name.lower(), {})
-        combined[player_name].update({
-            'WAR': adv.get('WAR', 0),
-            'OPS': adv.get('OPS', 0),
-            'SLG': adv.get('SLG', 0),
-            'OPS+': adv.get('OPS+', 0),
-            'dynasty_value': adv.get('dynasty_value', 0),
-        })
-
-    print(f"💾 Saving combined rankings with advanced stats to {OUTPUT_CSV}...")
-    write_csv(combined)
-    print("✅ Rankings updated successfully!")
+        print(f"❌ Error during rankings update: {e}", file=sys.stderr)
+        sys.exit(1)
 
 if __name__ == "__main__":
-    update_rankings()
+    main()

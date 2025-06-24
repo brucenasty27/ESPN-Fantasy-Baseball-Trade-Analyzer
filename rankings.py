@@ -9,14 +9,14 @@ RAZZBALL_HITTERS_URL = "https://razzball.com/mlbhittingstats/"
 RAZZBALL_PITCHERS_URL = "https://razzball.com/mlbpitchingstats/"
 FANTASYPROS_HITTERS_URL = "https://www.fantasypros.com/mlb/rankings/dynasty-hitters.php"
 FANTASYPROS_PITCHERS_URL = "https://www.fantasypros.com/mlb/rankings/dynasty-pitchers.php"
-HASHTAG_BASEBALL_URL = "https://hashtagbaseball.com/dynasty-rankings"
+HASHTAG_BASEBALL_URL = "https://hashtagbaseball.com/fantasy-baseball-rankings"
 STATCAST_ADVANCED_URL = "https://baseballsavant.mlb.com/leaderboard/dynasty?type=hitting"
 
 def clean_player_name(name):
     """Normalize player name for consistent matching."""
     if not isinstance(name, str):
         return ""
-    # Remove suffixes, parenthesis, whitespace, and lowercase
+    # Remove suffixes, parentheses, whitespace, and lowercase
     name = re.sub(r"\s*\(.*\)", "", name)
     name = re.sub(r" Jr\.| Sr\.| III| II", "", name)
     return name.strip().lower()
@@ -148,8 +148,10 @@ def fetch_statcast_advanced():
                     col_map["player"] = idx
                 elif "war" in col_lower:
                     col_map["WAR"] = idx
-                elif col_lower in ("ops", "ops+"):
-                    col_map[col_lower.upper()] = idx
+                elif col_lower == "ops":
+                    col_map["OPS"] = idx
+                elif col_lower == "ops+":
+                    col_map["OPS+"] = idx
                 elif "slg" in col_lower:
                     col_map["SLG"] = idx
 
@@ -169,7 +171,7 @@ def fetch_statcast_advanced():
 
                 stat_war = parse_float(cells[col_map.get("WAR", -1)].get_text()) if col_map.get("WAR", -1) >= 0 else 0.0
                 stat_ops = parse_float(cells[col_map.get("OPS", -1)].get_text()) if col_map.get("OPS", -1) >= 0 else 0.0
-                stat_ops_plus = parse_float(cells.get("OPS+", -1) and cells[col_map.get("OPS+", -1)].get_text() or "") if col_map.get("OPS+", -1) >= 0 else 0.0
+                stat_ops_plus = parse_float(cells[col_map.get("OPS+", -1)].get_text()) if col_map.get("OPS+", -1) >= 0 else 0.0
                 stat_slg = parse_float(cells[col_map.get("SLG", -1)].get_text()) if col_map.get("SLG", -1) >= 0 else 0.0
 
                 stats[name] = {
@@ -189,3 +191,39 @@ def fetch_statcast_advanced():
         return {}
 
     return stats
+
+def merge_advanced_stats(combined_rankings, advanced_stats):
+    """
+    Merge advanced stats into combined rankings dict.
+    """
+    for player_name, stats in combined_rankings.items():
+        adv = advanced_stats.get(player_name, {})
+        for key in ["WAR", "OPS", "SLG", "OPS+"]:
+            stats[key] = adv.get(key, 0.0)
+        # dynasty_value can be calculated later or left as 0 for now
+        stats["dynasty_value"] = 0
+    return combined_rankings
+
+def export_combined_rankings_to_csv(combined_rankings, filename="dynasty_rankings_cleaned.csv"):
+    """
+    Export the combined rankings dictionary to a CSV file.
+    """
+    rows = []
+    for name, stats in combined_rankings.items():
+        row = {
+            "name": name,
+            "overall_rank": stats.get("overall_rank", 0),
+            "pos_rank": stats.get("pos_rank", 0),
+            "position": stats.get("position", ""),
+            "WAR": stats.get("WAR", 0),
+            "OPS": stats.get("OPS", 0),
+            "SLG": stats.get("SLG", 0),
+            "OPS+": stats.get("OPS+", 0),
+            "dynasty_value": stats.get("dynasty_value", 0),
+        }
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+    df.to_csv(filename, index=False)
+    print(f"Saved combined rankings to {filename}")
+

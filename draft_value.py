@@ -13,10 +13,12 @@ class DraftPick:
     pick_number: int  # Overall pick number (1 to TOTAL_PICKS)
 
     def __str__(self) -> str:
-        # Display pick as "round.pick_in_round" with zero-padded pick_in_round
+        """
+        Returns pick formatted as 'round.pick_in_round', e.g. '1.01', '16.10'.
+        Zero-pads pick_in_round to 2 digits for clarity.
+        """
         pick_in_round = (self.pick_number - 1) % TEAM_COUNT + 1
         return f"{self.round_number}.{pick_in_round:02d}"
-
 
 def generate_draft_value_curve(
     total_picks: int = TOTAL_PICKS,
@@ -32,7 +34,6 @@ def generate_draft_value_curve(
         for i in range(total_picks)
     }
 
-
 def generate_snake_draft_order(
     team_count: int = TEAM_COUNT,
     rounds: int = ROUNDS
@@ -44,11 +45,10 @@ def generate_snake_draft_order(
     order = []
     for rnd in range(rounds):
         if rnd % 2 == 0:
-            order.extend(range(team_count))            # normal order
+            order.extend(range(team_count))             # normal order
         else:
-            order.extend(range(team_count - 1, -1, -1))  # reverse order
+            order.extend(range(team_count - 1, -1, -1)) # reverse order
     return order
-
 
 def assign_picks_to_teams(
     standings_teams: List[int],
@@ -75,7 +75,6 @@ def assign_picks_to_teams(
 
     return picks
 
-
 class DraftPickValuator:
     """
     Class to assign and retrieve draft pick values based on standings and draft order.
@@ -87,16 +86,21 @@ class DraftPickValuator:
         base_value: float = 100,
         decay_rate: float = 0.975
     ):
+        # Create pick value map: overall pick number -> value
         self.pick_value_map = generate_draft_value_curve(TOTAL_PICKS, base_value, decay_rate)
+
+        # Map (team_id, round_number) -> list of DraftPick objects (usually one pick)
         self.picks_by_team_round: Dict[Tuple[int, int], List[DraftPick]] = {}
+
+        # Map (team_id, round_number) -> max pick value for that pick
         self.pick_lookup: Dict[Tuple[int, int], float] = {}
 
-        # Assign picks to teams and group by (team_id, round)
+        # Assign picks to teams based on standings and rounds
         for pick in assign_picks_to_teams(standings_team_ids, ROUNDS):
             key = (pick.team_id, pick.round_number)
             self.picks_by_team_round.setdefault(key, []).append(pick)
 
-        # Compute max pick value per (team, round) in case multiple picks exist
+        # Store max pick value per (team, round) for lookup
         for key, picks in self.picks_by_team_round.items():
             values = [self.pick_value_map.get(p.pick_number, 0) for p in picks]
             self.pick_lookup[key] = max(values, default=0)

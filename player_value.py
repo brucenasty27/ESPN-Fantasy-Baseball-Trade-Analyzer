@@ -1,11 +1,19 @@
 import pandas as pd
+import os
 
-RANKINGS_FILE = "dynasty_rankings.csv"
+RANKINGS_FILE = os.path.join("data", "dynasty_rankings_cleaned.csv")
 
 def load_rankings():
+    if not os.path.exists(RANKINGS_FILE):
+        print(f"⚠️ Rankings file not found at {RANKINGS_FILE}")
+        return pd.DataFrame(columns=[
+            "name", "dynasty_value", "overall_rank", "pos_rank",
+            "WAR", "OPS", "SLG", "OPS+"
+        ])
     try:
         df = pd.read_csv(RANKINGS_FILE)
         df.fillna(0, inplace=True)
+        # Normalize player names for matching
         df["name"] = df["name"].astype(str).str.strip().str.lower()
         return df
     except Exception as e:
@@ -29,7 +37,9 @@ def get_dynasty_value(player_name):
     return 0
 
 def get_simple_draft_pick_value(pick):
+    # Assuming 10 picks per round in your league
     pick_num = (pick.round_number - 1) * 10 + 1
+    # Basic linear depreciation curve for draft picks
     return max(1, 100 - (pick_num - 1) * 0.6)
 
 def get_player_ranks(name):

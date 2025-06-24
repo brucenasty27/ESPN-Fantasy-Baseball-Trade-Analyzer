@@ -1,39 +1,28 @@
-# 🐍 Python bytecode and cache
+# Python
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-*.so
+*.egg-info/
+*.log
 
-# 🔐 Secrets and environment configs
+# Jupyter / VSCode
+.ipynb_checkpoints/
+.vscode/
+
+# Data files
+*.csv
+!dynasty_rankings_cleaned.csv  # Track only the final combined CSV
+
+# Environment
 .env
 .env.*
 
-# 🧪 Virtual environments (for venv, pipenv, conda, etc.)
-venv/
-.venv/
-.env/
-
-# 📦 Packaging artifacts
-*.egg-info/
-dist/
-build/
-
-# 💾 OS-specific hidden files
+# OS
 .DS_Store
 Thumbs.db
 
-# 📝 Logs and local data
-*.log
-
-# 🔄 Streamlit cache
+# Streamlit cache
+.cache/
 .streamlit/
 
-# 📊 App-generated ranking file
-dynasty_rankings.csv
-
-# 🧠 SQLite or other data artifacts (optional)
-*.sqlite3
-
-# 💡 VSCode project settings (optional)
-.vscode/
+# GitHub Actions
+.github/workflows/__pycache__/

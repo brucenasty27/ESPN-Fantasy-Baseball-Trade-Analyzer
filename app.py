@@ -29,7 +29,8 @@ except Exception as e:
     st.error(f"Error loading environment variables: {e}")
     st.stop()
 
-openai.api_key = OPENAI_API_KEY
+# Initialize OpenAI client with new API interface
+openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
 st.set_page_config(page_title="Dynasty Trade Analyzer", layout="wide")
 st.title("🏆 Dynasty Trade Analyzer with Draft Picks")
@@ -40,9 +41,7 @@ class DraftPickSimple:
     year: int
 
     def __str__(self):
-        suffix = {1: "st", 2: "nd", 3: "rd"}.get(
-            self.round_number if self.round_number < 20 else 0, "th"
-        )
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(self.round_number, "th")
         return f"{self.year} {self.round_number}{suffix} Round Pick"
 
 DRAFT_ROUNDS = 16
@@ -63,14 +62,18 @@ def load_league():
         st.stop()
 
 def get_team_logo(team):
-    logo = getattr(team, "logo_url", "")
-    if not logo:
+    try:
+        logo = getattr(team, "logo_url", None)
+        if not logo:
+            raise AttributeError
+        return logo
+    except Exception:
         # fallback placeholder for missing logos
-        logo = "https://via.placeholder.com/75?text=No+Logo"
-    return logo
+        return "https://via.placeholder.com/75?text=No+Logo"
 
 def calculate_trade_value(players, picks, pick_valuator=None, mode="simple", team_id=None):
-    player_value = sum(get_dynasty_value(p.name) for p in players)
+    # Normalize player names for dynasty value lookup
+    player_value = sum(get_dynasty_value(p.name.lower().strip()) for p in players)
     if mode == "advanced" and pick_valuator and team_id is not None:
         picks_value = sum(pick_valuator.get_pick_value(team_id, p.round_number) for p in picks)
     else:
@@ -90,7 +93,7 @@ def ai_trade_verdict(team1_name, team2_name, players_1, players_2, value_1, valu
         msg += f"Team 2 ({team2_name}) trades {', '.join([p.name for p in players_2])}. "
         msg += f"Team 1 value: {value_1:.2f}, Team 2 value: {value_2:.2f}. Who wins the trade? Suggest fair modifications if any."
 
-        response = openai.ChatCompletion.create(
+        response = openai_client.chat.completions.create(
             model="gpt-4",
             messages=[
                 {"role": "system", "content": "You are a fantasy baseball expert analyzing trade fairness."},
@@ -101,24 +104,29 @@ def ai_trade_verdict(team1_name, team2_name, players_1, players_2, value_1, valu
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
+        st.error(f"OpenAI API call failed: {e}")
         return f"AI verdict unavailable: {e}"
 
 @st.cache_data()
 def load_rankings_csv():
-    file = "dynasty_rankings_cleaned.csv"
+    file = os.path.join("data", "dynasty_rankings_cleaned.csv")
+    if not os.path.exists(file):
+        st.warning(f"⚠️ Missing {file}. Please run the ranking update workflow.")
+        return pd.DataFrame(columns=["name"])
     try:
         df = pd.read_csv(file)
+        if "name" not in df.columns:
+            raise KeyError("Missing 'name' column in rankings CSV.")
         df["name"] = df["name"].astype(str).str.strip().str.lower()
         return df
     except Exception as e:
         st.warning(f"⚠️ Failed to load {file}: {e}")
-        return pd.DataFrame()
-
+        return pd.DataFrame(columns=["name"])
 
 rankings_df = load_rankings_csv()
 
 # Initialize session state variables if not set
-for key in ["trade_from_team_1", "trade_from_team_2", "trade_picks_team_1_rounds", "trade_picks_team_2_rounds"]:
+for key in ["trade_from_team_1", "trade_from_team_2", "trade_picks_team_1", "trade_picks_team_2"]:
     if key not in st.session_state:
         st.session_state[key] = []
 
@@ -171,9 +179,8 @@ if st.session_state.pick_value_mode == "advanced":
     standings_team_ids = [team.team_id for team in sorted(league.teams, key=lambda t: t.wins)]
     pick_valuator = DraftPickValuator(standings_team_ids)
 
-# Prepare draft pick options with detailed names for UI
 def pick_suffix(n):
-    return {1: "st", 2: "nd", 3: "rd"}.get(n if n < 20 else 0, "th")
+    return {1: "st", 2: "nd", 3: "rd"}.get(n, "th")
 
 draft_pick_options = [f"{NEXT_DRAFT_YEAR} {rnd}{pick_suffix(rnd)} Round Pick" for rnd in range(1, DRAFT_ROUNDS + 1)]
 
@@ -181,7 +188,6 @@ def parse_pick_string(pick_str):
     # expects format like '2026 1st Round Pick'
     parts = pick_str.split()
     round_str = parts[1]
-    # remove suffix (st, nd, rd, th) from round
     for suffix in ["st", "nd", "rd", "th"]:
         if round_str.endswith(suffix):
             round_str = round_str[:-len(suffix)]
@@ -205,8 +211,9 @@ with tab_trade:
     col1.image(get_team_logo(team_1), width=75)
     col2.image(get_team_logo(team_2), width=75)
 
-    roster_1 = {p.name: p for p in team_1.roster}
-    roster_2 = {p.name: p for p in team_2.roster}
+    # Normalize roster dict keys
+    roster_1 = {p.name.lower().strip(): p for p in team_1.roster}
+    roster_2 = {p.name.lower().strip(): p for p in team_2.roster}
 
     trade_from_team_1 = st.multiselect("Players from Team 1", list(roster_1.keys()))
     trade_from_team_2 = st.multiselect("Players from Team 2", list(roster_2.keys()))
@@ -214,10 +221,9 @@ with tab_trade:
     draft_picks_team_1 = st.multiselect("Team 1 Draft Picks", options=draft_pick_options)
     draft_picks_team_2 = st.multiselect("Team 2 Draft Picks", options=draft_pick_options)
 
-    players_1 = [roster_1[name] for name in trade_from_team_1]
-    players_2 = [roster_2[name] for name in trade_from_team_2]
+    players_1 = [roster_1[name.lower().strip()] for name in trade_from_team_1]
+    players_2 = [roster_2[name.lower().strip()] for name in trade_from_team_2]
 
-    # Convert selected draft pick strings back to DraftPickSimple objects
     picks_1 = [DraftPickSimple(parse_pick_string(pick_str), NEXT_DRAFT_YEAR) for pick_str in draft_picks_team_1]
     picks_2 = [DraftPickSimple(parse_pick_string(pick_str), NEXT_DRAFT_YEAR) for pick_str in draft_picks_team_2]
 
@@ -257,14 +263,14 @@ with tab_trade:
 with tab_compare:
     st.header("🔍 Player Comparison Tool")
 
-    all_players = sorted(rankings_df["name"].unique())
+    all_players = sorted(rankings_df["name"].unique()) if not rankings_df.empty else []
     col1, col2 = st.columns(2)
 
     p1_name = col1.selectbox("Player 1", all_players)
-    p2_name = col2.selectbox("Player 2", all_players, index=1)
+    p2_name = col2.selectbox("Player 2", all_players, index=1 if len(all_players) > 1 else 0)
 
     def get_player_stats(name):
-        if not name:
+        if not name or rankings_df.empty:
             return {}
         row = rankings_df[rankings_df["name"] == name.lower()]
         if row.empty:
