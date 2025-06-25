@@ -1,68 +1,98 @@
 import os
 import pandas as pd
-from dotenv import load_dotenv
-from espn_api.baseball import League
-from rankings import (
-    fetch_all_sources,
-    combine_rankings,
-    clean_player_name,
-    calculate_dynasty_value_hitter,
-    calculate_dynasty_value_pitcher,
-)
 
-load_dotenv()
+from scrapers.scrape_fangraphs_hitters import fetch_fangraphs_hitters
+from scrapers.scrape_fangraphs_pitchers import fetch_fangraphs_pitchers
 
-def create_espn_league():
-    return League(
-        league_id=int(os.getenv("LEAGUE_ID")),
-        year=int(os.getenv("SEASON_YEAR")),
-        swid=os.getenv("SWID"),
-        espn_s2=os.getenv("ESPN_S2")
-    )
+DATA_DIR = "data"
+OUTPUT_CSV = os.path.join(DATA_DIR, "dynasty_rankings_cleaned.csv")
 
-def fetch_espn_stats(league):
-    data = []
-    for team in league.teams:
-        for player in team.roster:
-            stats = player.stats or {}
-            name = clean_player_name(player.name)
-            position = player.position or ""
+def compute_dynasty_value(row):
+    # Compute dynasty value differently for pitchers and hitters based on stats
+    
+    position = str(row.get("position", "")).upper()
+    pitcher_positions = {"SP", "RP", "P"}
 
-            record = {
-                "name": name,
-                "position": position,
-                "HR": stats.get("HR", 0),
-                "R": stats.get("R", 0),
-                "RBI": stats.get("RBI", 0),
-                "SB": stats.get("SB", 0),
-                "BB": stats.get("BB", 0),
-                "AVG": stats.get("AVG", 0.0),
-                "W": stats.get("W", 0),
-                "SV": stats.get("SV", 0),
-                "K": stats.get("K", 0),
-                "ERA": stats.get("ERA", 0.0),
-                "WHIP": stats.get("WHIP", 0.0),
-                "IP": stats.get("IP", 0.0),
-                "overall_rank": 0,
-                "pos_rank": 0,
-            }
-            data.append(record)
-    return pd.DataFrame(data)
+    if position in pitcher_positions:
+        # Pitcher dynasty value
+        w = row.get("W", 0)
+        sv = row.get("SV", 0)
+        k = row.get("K", 0)
+        era = row.get("ERA", 4.0)
+        whip = row.get("WHIP", 1.3)
+        ip = row.get("IP", 0)
 
-def main():
-    print("🔄 Updating dynasty rankings with ESPN league context...")
+        era_score = max(0, 4.0 - era) * 20.0
+        whip_score = max(0, 1.3 - whip) * 30.0
 
-    league = create_espn_league()
-    espn_df = fetch_espn_stats(league)
-    other_sources = fetch_all_sources()
+        value = (
+            w * 5.0 +
+            sv * 5.0 +
+            k * 1.0 +
+            era_score +
+            whip_score +
+            ip * 0.5
+        )
+    else:
+        # Hitter dynasty value
+        hr = row.get("HR", 0)
+        r = row.get("R", 0)
+        rbi = row.get("RBI", 0)
+        sb = row.get("SB", 0)
+        avg = row.get("AVG", 0)
+        bb = row.get("BB", 0)
 
-    all_dataframes = other_sources + [espn_df]
-    final_df = combine_rankings(all_dataframes)
+        value = (
+            hr * 4.0 +
+            r * 1.0 +
+            rbi * 1.0 +
+            sb * 2.0 +
+            avg * 50.0 +  # scale batting average
+            bb * 1.0
+        )
+    return round(value, 2)
 
-    output_path = os.path.join("data", "dynasty_rankings_cleaned.csv")
-    final_df.to_csv(output_path, index=False)
+def update_rankings():
+    print("Fetching hitters data from FanGraphs...")
+    hitters_df = fetch_fangraphs_hitters()
+    print(f"Fetched {len(hitters_df)} hitters")
 
-    print(f"✅ Dynasty rankings (with ESPN league data) saved to: {output_path}")
+    print("Fetching pitchers data from FanGraphs...")
+    pitchers_df = fetch_fangraphs_pitchers()
+    print(f"Fetched {len(pitchers_df)} pitchers")
+
+    # Combine hitters and pitchers data
+    df = pd.concat([hitters_df, pitchers_df], ignore_index=True)
+
+    # Normalize columns for expected stats, fill missing with zeros
+    stat_columns = ["HR", "R", "RBI", "SB", "AVG", "BB", "W", "SV", "K", "ERA", "WHIP", "IP"]
+    for col in stat_columns:
+        if col not in df.columns:
+            df[col] = 0
+
+    # Ensure position column exists
+    if "position" not in df.columns:
+        df["position"] = ""
+
+    # Calculate dynasty value
+    df["dynasty_value"] = df.apply(compute_dynasty_value, axis=1)
+
+    # Create rankings based on dynasty_value (descending)
+    df = df.sort_values("dynasty_value", ascending=False).reset_index(drop=True)
+    df["overall_rank"] = df.index + 1
+
+    # Position rank within each position group
+    df["pos_rank"] = df.groupby("position")["dynasty_value"] \
+                      .rank(method="first", ascending=False).astype(int)
+
+    # Normalize player names to lowercase stripped for consistency
+    df["name"] = df["name"].astype(str).str.strip().str.lower()
+    df["position"] = df["position"].astype(str).str.upper()
+
+    # Save to CSV
+    os.makedirs(DATA_DIR, exist_ok=True)
+    df.to_csv(OUTPUT_CSV, index=False)
+    print(f"Updated dynasty rankings saved to {OUTPUT_CSV}")
 
 if __name__ == "__main__":
-    main()
+    update_rankings()

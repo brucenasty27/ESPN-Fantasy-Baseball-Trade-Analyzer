@@ -1,215 +1,160 @@
 import pandas as pd
-import numpy as np
+import os
+from scrapers.scrape_espn_hitters import fetch_espn_hitters
+from scrapers.scrape_fangraphs_pitchers import fetch_fangraphs_pitchers
 
-# Define the paths to your scraper CSV files
-SCRAPER_FILES = {
-    "cbssports": "data/cbssports_rankings.csv",
-    "espn_hitters": "data/espn_hitters.csv",
-    "espn_pitchers": "data/espn_pitchers.csv",
-    "fangraphs_hitters": "data/fangraphs_hitters.csv",
-    "fangraphs_pitchers": "data/fangraphs_pitchers.csv",
-    "fantasypros": "data/fantasypros_combined_rankings.csv",
-    "fantraxhq": "data/fantraxhq_rankings.csv",
-    "mlbpipeline": "data/mlbpipeline_prospects.csv",
-    "pitcherlist": "data/pitcherlist_rankings.csv",
-    "prospectslive": "data/prospectslive_rankings.csv",
-    "rotoballer": "data/rotoballer_rankings.csv",
-    "rotowire": "data/rotowire_rankings.csv",
-}
+RANKINGS_FILE = os.path.join("data", "dynasty_rankings_cleaned.csv")
 
-# Standard column sets
-HITTER_STATS = ["HR", "R", "RBI", "SB", "BB", "AVG"]
-PITCHER_STATS = ["W", "SV", "K", "ERA", "WHIP"]
-
-# ESPN-style stat weights for dynasty value calculation
-STAT_WEIGHTS = {
-    # Hitters
-    "HR": 1.5,
-    "R": 1.2,
-    "RBI": 1.3,
-    "SB": 2.0,
-    "BB": 1.0,
-    "AVG": 20.0,  # scaled because AVG is decimal <1
-
-    # Pitchers
-    "W": 5.0,
-    "SV": 8.0,
-    "K": 1.0,
-    "ERA": -20.0,  # negative because lower ERA is better
-    "WHIP": -25.0  # negative because lower WHIP is better
-}
-
-def load_and_prepare(path, expected_columns):
-    """
-    Load a CSV, ensure expected columns exist, normalize names.
-    """
+# Helper function to safely parse IP (e.g. 45.2 innings = 45 + 2/3)
+def parse_ip(ip_val):
     try:
-        df = pd.read_csv(path)
-    except FileNotFoundError:
-        print(f"Warning: File not found: {path}")
-        return pd.DataFrame()
+        ip_float = float(ip_val)
+        whole = int(ip_float)
+        fraction = round(ip_float - whole, 1)
+        if fraction == 0.1:
+            return whole + 1/3
+        elif fraction == 0.2:
+            return whole + 2/3
+        return ip_float
+    except:
+        return 0.0
 
-    # Lowercase and strip names for consistency
-    df["name"] = df["name"].astype(str).str.lower().str.strip()
+def fetch_all_sources():
+    hitters = fetch_espn_hitters()
+    pitchers = fetch_fangraphs_pitchers()
 
-    # Ensure all expected columns exist, fill missing with 0 or ''
-    for col in expected_columns:
-        if col not in df.columns:
-            df[col] = 0 if col not in ["name", "position"] else ""
+    if pitchers is not None and "IP" in pitchers.columns:
+        pitchers["IP"] = pitchers["IP"].apply(parse_ip)
 
-    # Convert numeric columns to numeric types
-    for col in expected_columns:
-        if col not in ["name", "position"]:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+    combined = pd.concat([hitters, pitchers], ignore_index=True, sort=False).fillna(0)
 
-    # Ensure position column exists
-    if "position" not in df.columns:
-        df["position"] = ""
+    combined["dynasty_value"] = combined.apply(lambda row: dynasty_value_pitcher(row) if row["position"] in ["SP", "RP", "P"] else dynasty_value_hitter(row), axis=1)
 
-    return df
+    # Fill default ranks if not present
+    if "overall_rank" not in combined:
+        combined["overall_rank"] = 9999
+    if "pos_rank" not in combined:
+        combined["pos_rank"] = 9999
 
-def merge_dataframes(dfs):
-    """
-    Merge multiple DataFrames on player 'name' and 'position' using outer join.
-    For stats columns, take the max or mean across sources.
-    """
-    if not dfs:
-        return pd.DataFrame()
+    combined = combined[[
+        "name", "dynasty_value", "overall_rank", "pos_rank", "position",
+        "WAR", "OPS", "SLG", "OPS+",
+        "HR", "R", "RBI", "SB", "AVG", "BB",
+        "W", "SV", "K", "ERA", "WHIP", "IP"
+    ]].copy()
 
-    combined = dfs[0]
-
-    for df in dfs[1:]:
-        combined = pd.merge(combined, df, on=["name", "position"], how="outer", suffixes=("", "_y"))
-
-        # For each stat column, resolve duplicates by picking max or mean
-        for col in HITTER_STATS + PITCHER_STATS + ["overall_rank", "pos_rank"]:
-            col_y = f"{col}_y"
-            if col in combined.columns and col_y in combined.columns:
-                combined[col] = combined[[col, col_y]].max(axis=1, skipna=True)
-                combined.drop(columns=[col_y], inplace=True)
-            elif col_y in combined.columns:
-                combined[col] = combined[col_y]
-                combined.drop(columns=[col_y], inplace=True)
-
+    combined.to_csv(RANKINGS_FILE, index=False)
     return combined
 
-def calculate_dynasty_value(df):
-    """
-    Calculate dynasty_value for hitters and pitchers based on stat weights.
-    Negative weights apply to ERA and WHIP.
-    """
-    df = df.copy()
+def load_rankings():
+    if not os.path.exists(RANKINGS_FILE):
+        print(f"⚠️ Rankings file not found at {RANKINGS_FILE}")
+        return pd.DataFrame(columns=[
+            "name", "dynasty_value", "overall_rank", "pos_rank",
+            "WAR", "OPS", "SLG", "OPS+",
+            "HR", "R", "RBI", "SB", "AVG", "BB",
+            "W", "SV", "K", "ERA", "WHIP", "IP",
+            "position"
+        ])
+    try:
+        df = pd.read_csv(RANKINGS_FILE)
+        df.fillna(0, inplace=True)
+        df["name"] = df["name"].astype(str).str.strip().str.lower()
+        df["position"] = df["position"].astype(str).str.upper()
+        df["IP"] = df["IP"].apply(parse_ip)
+        return df
+    except Exception as e:
+        print(f"Error loading rankings: {e}")
+        return pd.DataFrame(columns=[
+            "name", "dynasty_value", "overall_rank", "pos_rank",
+            "WAR", "OPS", "SLG", "OPS+",
+            "HR", "R", "RBI", "SB", "AVG", "BB",
+            "W", "SV", "K", "ERA", "WHIP", "IP",
+            "position"
+        ])
 
-    # Separate hitters and pitchers by position codes
-    pitcher_positions = {"sp", "rp", "p"}
-    df["is_pitcher"] = df["position"].str.lower().isin(pitcher_positions)
+rankings_df = load_rankings()
 
-    # Fill missing stats with 0
-    for stat in HITTER_STATS + PITCHER_STATS:
-        if stat not in df.columns:
-            df[stat] = 0
+def dynasty_value_hitter(stats):
+    return round(
+        stats.get("HR", 0) * 4.0 +
+        stats.get("R", 0) * 1.0 +
+        stats.get("RBI", 0) * 1.0 +
+        stats.get("SB", 0) * 2.0 +
+        stats.get("AVG", 0) * 50.0 +
+        stats.get("BB", 0) * 1.0,
+        2
+    )
 
-    # Calculate hitters dynasty value
-    def hitter_value(row):
-        return sum(row[stat] * STAT_WEIGHTS.get(stat, 0) for stat in HITTER_STATS)
+def dynasty_value_pitcher(stats):
+    era = stats.get("ERA", 4.0)
+    whip = stats.get("WHIP", 1.3)
+    era_score = max(0, 4.0 - era) * 20.0
+    whip_score = max(0, 1.3 - whip) * 30.0
 
-    # Calculate pitchers dynasty value
-    def pitcher_value(row):
-        # Note ERA and WHIP are negative weights, so multiply accordingly
-        era_val = row.get("ERA", 0)
-        whip_val = row.get("WHIP", 0)
-        return (
-            row.get("W", 0) * STAT_WEIGHTS["W"] +
-            row.get("SV", 0) * STAT_WEIGHTS["SV"] +
-            row.get("K", 0) * STAT_WEIGHTS["K"] +
-            era_val * STAT_WEIGHTS["ERA"] +
-            whip_val * STAT_WEIGHTS["WHIP"]
-        )
+    return round(
+        stats.get("W", 0) * 5.0 +
+        stats.get("SV", 0) * 5.0 +
+        stats.get("K", 0) * 1.0 +
+        era_score +
+        whip_score +
+        stats.get("IP", 0) * 0.5,
+        2
+    )
 
-    df["dynasty_value"] = 0
-    df.loc[~df["is_pitcher"], "dynasty_value"] = df.loc[~df["is_pitcher"]].apply(hitter_value, axis=1)
-    df.loc[df["is_pitcher"], "dynasty_value"] = df.loc[df["is_pitcher"]].apply(pitcher_value, axis=1)
+def get_dynasty_value(player_name):
+    if not player_name:
+        return 0
+    if hasattr(player_name, 'name'):
+        player_name = player_name.name
 
-    # Optional: normalize dynasty_value to 0-100 scale for easier interpretation
-    min_val = df["dynasty_value"].min()
-    max_val = df["dynasty_value"].max()
-    if max_val > min_val:
-        df["dynasty_value_norm"] = (df["dynasty_value"] - min_val) / (max_val - min_val) * 100
+    name = str(player_name).strip().lower()
+    match = rankings_df[rankings_df["name"] == name]
+    if match.empty:
+        return 0
+
+    row = match.iloc[0]
+
+    stats = {
+        "HR": row.get("HR", 0),
+        "R": row.get("R", 0),
+        "RBI": row.get("RBI", 0),
+        "SB": row.get("SB", 0),
+        "AVG": row.get("AVG", 0),
+        "BB": row.get("BB", 0),
+        "W": row.get("W", 0),
+        "SV": row.get("SV", 0),
+        "K": row.get("K", 0),
+        "ERA": row.get("ERA", 4.0),
+        "WHIP": row.get("WHIP", 1.3),
+        "IP": parse_ip(row.get("IP", 0))
+    }
+
+    position = str(row.get("position", "")).upper()
+    if position in {"SP", "RP", "P"}:
+        return dynasty_value_pitcher(stats)
     else:
-        df["dynasty_value_norm"] = 0
+        return dynasty_value_hitter(stats)
 
-    return df
+def get_simple_draft_pick_value(pick):
+    pick_num = (pick.round_number - 1) * 10 + 1
+    return max(1, 100 - (pick_num - 1) * 0.6)
 
-def assign_ranks(df):
-    """
-    Assign overall rank and positional rank based on dynasty_value.
-    """
-    df = df.copy()
-    df = df.sort_values("dynasty_value", ascending=False).reset_index(drop=True)
-    df["overall_rank"] = df.index + 1
+def get_player_ranks(name):
+    if not name:
+        return {}
+    name = str(name).strip().lower()
+    match = rankings_df[rankings_df["name"] == name]
+    if match.empty:
+        return {}
 
-    # Positional ranks
-    df["pos_rank"] = df.groupby("position")["dynasty_value"].rank(method="min", ascending=False).astype(int)
-
-    return df
-
-def main():
-    print("Loading and preparing data from all scrapers...")
-    dfs = []
-
-    # Load hitters data sources
-    hitters_sources = [
-        "cbssports",
-        "espn_hitters",
-        "fangraphs_hitters",
-        "fantasypros",
-        "fantraxhq",
-        "mlbpipeline",
-        "prospectslive",
-        "rotoballer",
-        "rotowire"
-    ]
-
-    # Load pitchers data sources
-    pitchers_sources = [
-        "espn_pitchers",
-        "fangraphs_pitchers",
-        "fantasypros",
-        "fantraxhq",
-        "pitcherlist",
-        "prospectslive",
-        "rotoballer",
-        "rotowire"
-    ]
-
-    # Prepare hitters dfs
-    for source in hitters_sources:
-        path = SCRAPER_FILES.get(source)
-        if not path:
-            continue
-        df = load_and_prepare(path, ["name", "overall_rank", "pos_rank", "position"] + HITTER_STATS)
-        dfs.append(df)
-
-    # Prepare pitchers dfs
-    for source in pitchers_sources:
-        path = SCRAPER_FILES.get(source)
-        if not path:
-            continue
-        df = load_and_prepare(path, ["name", "overall_rank", "pos_rank", "position"] + PITCHER_STATS)
-        dfs.append(df)
-
-    print(f"Loaded {len(dfs)} dataframes, merging now...")
-    combined = merge_dataframes(dfs)
-
-    print(f"Calculating dynasty values for {len(combined)} players...")
-    combined = calculate_dynasty_value(combined)
-
-    print("Assigning ranks...")
-    combined = assign_ranks(combined)
-
-    # Save final cleaned file
-    combined.to_csv("data/dynasty_rankings_cleaned.csv", index=False)
-    print(f"✅ Saved cleaned dynasty rankings ({len(combined)}) to data/dynasty_rankings_cleaned.csv")
-
-if __name__ == "__main__":
-    main()
+    row = match.iloc[0]
+    return {
+        "Dynasty Value": float(row.get("dynasty_value", 0)),
+        "Overall Rank": int(row.get("overall_rank", 9999)),
+        "Position Rank": int(row.get("pos_rank", 9999)),
+        "WAR": float(row.get("WAR", 0)),
+        "OPS": float(row.get("OPS", 0)),
+        "SLG": float(row.get("SLG", 0)),
+        "OPS+": float(row.get("OPS+", 0)),
+    }
