@@ -1,14 +1,15 @@
 import streamlit as st
 from espn_api.baseball import League
-from player_value import get_dynasty_value, get_simple_draft_pick_value
 from draft_value import DraftPickValuator, DraftPick
-import datetime
 from dataclasses import dataclass
+import datetime
 import os
 from dotenv import load_dotenv
-import subprocess
-import openai
 import pandas as pd
+import openai
+
+from rankings import fetch_all_sources, combine_rankings, clean_player_name
+from player_value import get_dynasty_value, get_simple_draft_pick_value
 
 # Load environment variables from .env file
 load_dotenv()
@@ -66,12 +67,11 @@ def load_league():
 def get_team_logo(team):
     logo = getattr(team, "logo_url", "")
     if not logo:
-        # fallback placeholder for missing logos
         logo = "https://via.placeholder.com/75?text=No+Logo"
     return logo
 
 def calculate_trade_value(players, picks, pick_valuator=None, mode="simple", team_id=None):
-    player_value = sum(get_dynasty_value(p.name) for p in players)
+    player_value = sum(get_dynasty_value(clean_player_name(p.name)) for p in players)
     if mode == "advanced" and pick_valuator and team_id is not None:
         picks_value = sum(pick_valuator.get_pick_value(team_id, p.round_number) for p in picks)
     else:
@@ -80,10 +80,13 @@ def calculate_trade_value(players, picks, pick_valuator=None, mode="simple", tea
 
 def refresh_rankings():
     try:
-        result = subprocess.run(["python", "update_rankings.py"], capture_output=True, text=True, check=True)
-        return result.stdout
-    except subprocess.CalledProcessError as e:
-        return f"Error refreshing rankings: {e.stderr}"
+        dfs = fetch_all_sources()
+        df = combine_rankings(dfs)
+        output_path = os.path.join("data", "dynasty_rankings_cleaned.csv")
+        df.to_csv(output_path, index=False)
+        return "✅ Dynasty rankings refreshed and saved."
+    except Exception as e:
+        return f"Error refreshing rankings: {e}"
 
 def ai_trade_verdict(team1_name, team2_name, players_1, players_2, value_1, value_2):
     try:
@@ -132,7 +135,6 @@ if "pick_value_mode" not in st.session_state:
 if "last_sync" not in st.session_state:
     st.session_state.last_sync = None
 
-# Sidebar for settings and controls
 with st.sidebar:
     st.header("Settings")
 
@@ -158,7 +160,6 @@ with st.sidebar:
             st.session_state.last_sync = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         st.success(f"✅ League data synced at {st.session_state.last_sync}")
 
-# Load league at startup or after syncing
 if "league" not in st.session_state or st.session_state.last_sync is None:
     league = load_league()
     st.session_state.league = league
@@ -170,33 +171,27 @@ if st.session_state.last_sync:
 
 team_names = [team.team_name for team in league.teams]
 
-# Setup pick valuator if advanced mode selected
 pick_valuator = None
 if st.session_state.pick_value_mode == "advanced":
     standings_team_ids = [team.team_id for team in sorted(league.teams, key=lambda t: t.wins)]
     pick_valuator = DraftPickValuator(standings_team_ids)
 
-# Prepare draft pick options with detailed names for UI
 def pick_suffix(n):
     return {1: "st", 2: "nd", 3: "rd"}.get(n if n < 20 else 0, "th")
 
 draft_pick_options = [f"{NEXT_DRAFT_YEAR} {rnd}{pick_suffix(rnd)} Round Pick" for rnd in range(1, DRAFT_ROUNDS + 1)]
 
 def parse_pick_string(pick_str):
-    # expects format like '2026 1st Round Pick'
     parts = pick_str.split()
     round_str = parts[1]
-    # remove suffix (st, nd, rd, th) from round
     for suffix in ["st", "nd", "rd", "th"]:
         if round_str.endswith(suffix):
             round_str = round_str[:-len(suffix)]
             break
     return int(round_str)
 
-# Main tabs for app functionality
 tab_trade, tab_search, tab_compare = st.tabs(["Trade Analyzer", "Player Search", "Player Comparison"])
 
-# -- Trade Analyzer Tab --
 with tab_trade:
     st.header("🤝 Trade Analyzer")
 
@@ -222,7 +217,6 @@ with tab_trade:
     players_1 = [roster_1[name] for name in trade_from_team_1]
     players_2 = [roster_2[name] for name in trade_from_team_2]
 
-    # Convert selected draft pick strings back to DraftPickSimple objects
     picks_1 = [DraftPickSimple(parse_pick_string(pick_str), NEXT_DRAFT_YEAR) for pick_str in draft_picks_team_1]
     picks_2 = [DraftPickSimple(parse_pick_string(pick_str), NEXT_DRAFT_YEAR) for pick_str in draft_picks_team_2]
 
@@ -258,7 +252,6 @@ with tab_trade:
             st.markdown("### 🤖 Who Says No?")
             st.write(verdict)
 
-# -- Player Comparison Tab --
 with tab_compare:
     st.header("🔍 Player Comparison Tool")
 
@@ -280,7 +273,7 @@ with tab_compare:
     stats2 = get_player_stats(p2_name)
 
     if stats1 and stats2:
-        stat_keys = ["overall_rank", "pos_rank", "dynasty_value", "WAR", "OPS", "SLG", "OPS+"]
+        stat_keys = ["overall_rank", "pos_rank", "dynasty_value", "HR", "R", "RBI", "SB", "BB", "AVG", "W", "SV", "K", "ERA", "WHIP"]
         st.markdown("### Stat Comparison")
         for key in stat_keys:
             val1 = stats1.get(key, 0)

@@ -6,12 +6,11 @@ import re
 URL = "https://www.fangraphs.com/fantasy-tools/player-rater?leaguetype=1"
 
 def clean_name(name):
-    # Remove suffixes and trailing spaces
     name = re.sub(r"\s*\(.*\)", "", name)
     name = re.sub(r" Jr\.| Sr\.| III| II", "", name)
     return name.strip().lower()
 
-def scrape_fangraphs_hitters():
+def fetch_fangraphs_hitters():
     headers = {
         "User-Agent": "Mozilla/5.0"
     }
@@ -22,69 +21,69 @@ def scrape_fangraphs_hitters():
 
     soup = BeautifulSoup(response.text, "html.parser")
 
-    # The player table is within a div with id 'LeaderBoard1_dg1_ctl'
-    table = soup.find("table", id="LeaderBoard1_dg1_ctl")
-    if not table:
-        # FanGraphs sometimes uses id "LeaderBoard1_dg1" for the table
-        table = soup.find("table", id="LeaderBoard1_dg1")
-    if not table:
-        # fallback: find first table in the page (not ideal)
-        table = soup.find("table")
+    table = soup.find("table", id="LeaderBoard1_dg1_ctl") or \
+            soup.find("table", id="LeaderBoard1_dg1") or \
+            soup.find("table")
+
     if not table:
         print("Could not find player ratings table")
         return pd.DataFrame()
 
-    headers = [th.get_text(strip=True).lower() for th in table.find("thead").find_all("th")]
-    rows = []
+    headers_row = [th.get_text(strip=True).lower() for th in table.find("thead").find_all("th")]
+    # print("Detected table headers:", headers_row)
 
+    rows = []
     for tr in table.find("tbody").find_all("tr"):
         cells = tr.find_all("td")
-        if not cells or len(cells) != len(headers):
+        if not cells or len(cells) != len(headers_row):
             continue
         row_data = {}
         for i, cell in enumerate(cells):
             text = cell.get_text(strip=True)
-            # Special handling for player name column (usually first column)
-            if i == 1 or 'player' in headers[i]:  # The second column sometimes holds player name
-                # Extract name from anchor tag if present
+            if i == 1 or 'player' in headers_row[i]:
                 a = cell.find("a")
                 if a:
                     text = a.get_text(strip=True)
                 text = clean_name(text)
-            row_data[headers[i]] = text
+            row_data[headers_row[i]] = text
         rows.append(row_data)
 
     df = pd.DataFrame(rows)
 
-    # Select and rename relevant columns if present
+    # Mapping columns to ESPN-style stats used in dynasty_value
     col_map = {
         'player': 'name',
         'pos': 'position',
         'rank': 'overall_rank',
-        'war': 'WAR',
-        'ops': 'OPS',
-        'slg': 'SLG',
-        'ops+': 'OPS+',
-        'value': 'dynasty_value'
+        'hr': 'HR',
+        'r': 'R',
+        'rbi': 'RBI',
+        'sb': 'SB',
+        'bb': 'BB',
+        'avg': 'AVG',
     }
 
+    # Rename columns if found in df
     for old_col in list(df.columns):
-        if old_col in col_map:
-            df.rename(columns={old_col: col_map[old_col]}, inplace=True)
+        col_lower = old_col.lower()
+        for key, new_col in col_map.items():
+            if key == col_lower and new_col not in df.columns:
+                df.rename(columns={old_col: new_col}, inplace=True)
+
+    # Make sure all columns exist, fill missing with default 0 or empty string
+    for col in ['overall_rank', 'pos_rank', 'position', 'HR', 'R', 'RBI', 'SB', 'BB', 'AVG']:
+        if col not in df.columns:
+            df[col] = 0 if col != 'position' else ''
 
     # Convert numeric columns
-    numeric_cols = ['overall_rank', 'WAR', 'OPS', 'SLG', 'OPS+', 'dynasty_value']
+    numeric_cols = ['overall_rank', 'pos_rank', 'HR', 'R', 'RBI', 'SB', 'BB', 'AVG']
     for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-    # Fill NaN with zeros for numeric columns
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = df[col].fillna(0)
-
-    df.to_csv("fangraphs_hitters_rankings.csv", index=False)
-    print("Saved FanGraphs hitters rankings to fangraphs_hitters_rankings.csv")
+    return df[['name', 'overall_rank', 'pos_rank', 'position', 'HR', 'R', 'RBI', 'SB', 'BB', 'AVG']]
 
 if __name__ == "__main__":
-    scrape_fangraphs_hitters()
+    df = fetch_fangraphs_hitters()
+    print(f"Fetched {len(df)} hitters from FanGraphs")
+    # Optional save:
+    df.to_csv("data/fangraphs_hitters.csv", index=False)

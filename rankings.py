@@ -1,229 +1,215 @@
 import pandas as pd
-import requests
-import re
-from bs4 import BeautifulSoup
-import time
+import numpy as np
 
-# URLs for data sources
-RAZZBALL_HITTERS_URL = "https://razzball.com/mlbhittingstats/"
-RAZZBALL_PITCHERS_URL = "https://razzball.com/mlbpitchingstats/"
-FANTASYPROS_HITTERS_URL = "https://www.fantasypros.com/mlb/rankings/dynasty-hitters.php"
-FANTASYPROS_PITCHERS_URL = "https://www.fantasypros.com/mlb/rankings/dynasty-pitchers.php"
-HASHTAG_BASEBALL_URL = "https://hashtagbaseball.com/fantasy-baseball-rankings"
-STATCAST_ADVANCED_URL = "https://baseballsavant.mlb.com/leaderboard/dynasty?type=hitting"
+# Define the paths to your scraper CSV files
+SCRAPER_FILES = {
+    "cbssports": "data/cbssports_rankings.csv",
+    "espn_hitters": "data/espn_hitters.csv",
+    "espn_pitchers": "data/espn_pitchers.csv",
+    "fangraphs_hitters": "data/fangraphs_hitters.csv",
+    "fangraphs_pitchers": "data/fangraphs_pitchers.csv",
+    "fantasypros": "data/fantasypros_combined_rankings.csv",
+    "fantraxhq": "data/fantraxhq_rankings.csv",
+    "mlbpipeline": "data/mlbpipeline_prospects.csv",
+    "pitcherlist": "data/pitcherlist_rankings.csv",
+    "prospectslive": "data/prospectslive_rankings.csv",
+    "rotoballer": "data/rotoballer_rankings.csv",
+    "rotowire": "data/rotowire_rankings.csv",
+}
 
-def clean_player_name(name):
-    """Normalize player name for consistent matching."""
-    if not isinstance(name, str):
-        return ""
-    # Remove suffixes, parentheses, whitespace, and lowercase
-    name = re.sub(r"\s*\(.*\)", "", name)
-    name = re.sub(r" Jr\.| Sr\.| III| II", "", name)
-    return name.strip().lower()
+# Standard column sets
+HITTER_STATS = ["HR", "R", "RBI", "SB", "BB", "AVG"]
+PITCHER_STATS = ["W", "SV", "K", "ERA", "WHIP"]
 
-def fetch_razzball_hitters():
-    try:
-        tables = pd.read_html(RAZZBALL_HITTERS_URL)
-        df = tables[0]
-        df['name'] = df['Player'].apply(clean_player_name)
-        df['overall_rank'] = df['Rank']
-        df['pos_rank'] = df['PosRank']
-        df['position'] = df['Pos']
-        return df[['name', 'overall_rank', 'pos_rank', 'position']]
-    except Exception as e:
-        print(f"Warning: Failed to fetch Razzball hitters: {e}")
-        return pd.DataFrame()
+# ESPN-style stat weights for dynasty value calculation
+STAT_WEIGHTS = {
+    # Hitters
+    "HR": 1.5,
+    "R": 1.2,
+    "RBI": 1.3,
+    "SB": 2.0,
+    "BB": 1.0,
+    "AVG": 20.0,  # scaled because AVG is decimal <1
 
-def fetch_razzball_pitchers():
-    try:
-        tables = pd.read_html(RAZZBALL_PITCHERS_URL)
-        df = tables[0]
-        df['name'] = df['Player'].apply(clean_player_name)
-        df['overall_rank'] = df['Rank']
-        df['pos_rank'] = df['PosRank']
-        df['position'] = df['Pos']
-        return df[['name', 'overall_rank', 'pos_rank', 'position']]
-    except Exception as e:
-        print(f"Warning: Failed to fetch Razzball pitchers: {e}")
-        return pd.DataFrame()
+    # Pitchers
+    "W": 5.0,
+    "SV": 8.0,
+    "K": 1.0,
+    "ERA": -20.0,  # negative because lower ERA is better
+    "WHIP": -25.0  # negative because lower WHIP is better
+}
 
-def fetch_fantasypros_hitters():
-    try:
-        tables = pd.read_html(FANTASYPROS_HITTERS_URL)
-        df = tables[0]
-        df['name'] = df['Player'].apply(clean_player_name)
-        df['overall_rank'] = df.index + 1
-        df['pos_rank'] = 0  # No positional rank on FP for now
-        df['position'] = df['POS'] if 'POS' in df.columns else ''
-        return df[['name', 'overall_rank', 'pos_rank', 'position']]
-    except Exception as e:
-        print(f"Warning: Failed to fetch FantasyPros hitters: {e}")
-        return pd.DataFrame()
-
-def fetch_fantasypros_pitchers():
-    try:
-        tables = pd.read_html(FANTASYPROS_PITCHERS_URL)
-        df = tables[0]
-        df['name'] = df['Player'].apply(clean_player_name)
-        df['overall_rank'] = df.index + 1
-        df['pos_rank'] = 0
-        df['position'] = df['POS'] if 'POS' in df.columns else ''
-        return df[['name', 'overall_rank', 'pos_rank', 'position']]
-    except Exception as e:
-        print(f"Warning: Failed to fetch FantasyPros pitchers: {e}")
-        return pd.DataFrame()
-
-def fetch_hashtagbaseball():
-    try:
-        tables = pd.read_html(HASHTAG_BASEBALL_URL)
-        df = tables[0]
-        df['name'] = df['Player'].apply(clean_player_name)
-        df['overall_rank'] = df.index + 1
-        df['pos_rank'] = 0
-        df['position'] = df['POS'] if 'POS' in df.columns else ''
-        return df[['name', 'overall_rank', 'pos_rank', 'position']]
-    except Exception as e:
-        print(f"Warning: Failed to fetch Hashtag Baseball rankings: {e}")
-        return pd.DataFrame()
-
-def combine_rankings(dfs):
+def load_and_prepare(path, expected_columns):
     """
-    Combine multiple DataFrames by averaging ranks for matching players.
-    Returns a dict keyed by player name with averaged ranks and positions.
+    Load a CSV, ensure expected columns exist, normalize names.
     """
-    combined = {}
+    try:
+        df = pd.read_csv(path)
+    except FileNotFoundError:
+        print(f"Warning: File not found: {path}")
+        return pd.DataFrame()
 
-    for df in dfs:
-        if df.empty:
-            continue
-        for _, row in df.iterrows():
-            name = row['name']
-            if name not in combined:
-                combined[name] = {
-                    'overall_rank': 0,
-                    'pos_rank': 0,
-                    'position': row.get('position', ''),
-                    'count': 0
-                }
-            combined[name]['overall_rank'] += row['overall_rank']
-            combined[name]['pos_rank'] += row['pos_rank']
-            combined[name]['count'] += 1
+    # Lowercase and strip names for consistency
+    df["name"] = df["name"].astype(str).str.lower().str.strip()
 
-    # Average ranks
-    for name in combined:
-        count = combined[name]['count']
-        if count > 0:
-            combined[name]['overall_rank'] /= count
-            combined[name]['pos_rank'] /= count
+    # Ensure all expected columns exist, fill missing with 0 or ''
+    for col in expected_columns:
+        if col not in df.columns:
+            df[col] = 0 if col not in ["name", "position"] else ""
+
+    # Convert numeric columns to numeric types
+    for col in expected_columns:
+        if col not in ["name", "position"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+    # Ensure position column exists
+    if "position" not in df.columns:
+        df["position"] = ""
+
+    return df
+
+def merge_dataframes(dfs):
+    """
+    Merge multiple DataFrames on player 'name' and 'position' using outer join.
+    For stats columns, take the max or mean across sources.
+    """
+    if not dfs:
+        return pd.DataFrame()
+
+    combined = dfs[0]
+
+    for df in dfs[1:]:
+        combined = pd.merge(combined, df, on=["name", "position"], how="outer", suffixes=("", "_y"))
+
+        # For each stat column, resolve duplicates by picking max or mean
+        for col in HITTER_STATS + PITCHER_STATS + ["overall_rank", "pos_rank"]:
+            col_y = f"{col}_y"
+            if col in combined.columns and col_y in combined.columns:
+                combined[col] = combined[[col, col_y]].max(axis=1, skipna=True)
+                combined.drop(columns=[col_y], inplace=True)
+            elif col_y in combined.columns:
+                combined[col] = combined[col_y]
+                combined.drop(columns=[col_y], inplace=True)
 
     return combined
 
-def fetch_statcast_advanced():
+def calculate_dynasty_value(df):
     """
-    Fetch advanced stats (WAR, OPS, SLG, OPS+) from Baseball Savant or fallback.
-    Returns dict keyed by player name with stat dict.
+    Calculate dynasty_value for hitters and pitchers based on stat weights.
+    Negative weights apply to ERA and WHIP.
     """
-    headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; FantasyTradeAnalyzer/1.0; +https://yourdomain.com)"
-    }
+    df = df.copy()
 
-    stats = {}
+    # Separate hitters and pitchers by position codes
+    pitcher_positions = {"sp", "rp", "p"}
+    df["is_pitcher"] = df["position"].str.lower().isin(pitcher_positions)
 
-    try:
-        resp = requests.get(STATCAST_ADVANCED_URL, headers=headers, timeout=10)
-        resp.raise_for_status()
+    # Fill missing stats with 0
+    for stat in HITTER_STATS + PITCHER_STATS:
+        if stat not in df.columns:
+            df[stat] = 0
 
-        # Parse HTML table since JSON API may not be available
-        if "text/html" in resp.headers.get("Content-Type", ""):
-            soup = BeautifulSoup(resp.text, "html.parser")
-            table = soup.find("table")
-            if not table:
-                raise RuntimeError("Advanced stats table not found")
+    # Calculate hitters dynasty value
+    def hitter_value(row):
+        return sum(row[stat] * STAT_WEIGHTS.get(stat, 0) for stat in HITTER_STATS)
 
-            headers_row = [th.get_text(strip=True) for th in table.find_all("th")]
-            col_map = {}
-            for idx, col in enumerate(headers_row):
-                col_lower = col.lower()
-                if "player" in col_lower:
-                    col_map["player"] = idx
-                elif "war" in col_lower:
-                    col_map["WAR"] = idx
-                elif col_lower == "ops":
-                    col_map["OPS"] = idx
-                elif col_lower == "ops+":
-                    col_map["OPS+"] = idx
-                elif "slg" in col_lower:
-                    col_map["SLG"] = idx
+    # Calculate pitchers dynasty value
+    def pitcher_value(row):
+        # Note ERA and WHIP are negative weights, so multiply accordingly
+        era_val = row.get("ERA", 0)
+        whip_val = row.get("WHIP", 0)
+        return (
+            row.get("W", 0) * STAT_WEIGHTS["W"] +
+            row.get("SV", 0) * STAT_WEIGHTS["SV"] +
+            row.get("K", 0) * STAT_WEIGHTS["K"] +
+            era_val * STAT_WEIGHTS["ERA"] +
+            whip_val * STAT_WEIGHTS["WHIP"]
+        )
 
-            for row in table.find_all("tr")[1:]:
-                cells = row.find_all("td")
-                if len(cells) < len(headers_row):
-                    continue
+    df["dynasty_value"] = 0
+    df.loc[~df["is_pitcher"], "dynasty_value"] = df.loc[~df["is_pitcher"]].apply(hitter_value, axis=1)
+    df.loc[df["is_pitcher"], "dynasty_value"] = df.loc[df["is_pitcher"]].apply(pitcher_value, axis=1)
 
-                name_raw = cells[col_map["player"]].get_text(strip=True)
-                name = clean_player_name(name_raw)
+    # Optional: normalize dynasty_value to 0-100 scale for easier interpretation
+    min_val = df["dynasty_value"].min()
+    max_val = df["dynasty_value"].max()
+    if max_val > min_val:
+        df["dynasty_value_norm"] = (df["dynasty_value"] - min_val) / (max_val - min_val) * 100
+    else:
+        df["dynasty_value_norm"] = 0
 
-                def parse_float(val):
-                    try:
-                        return float(val)
-                    except:
-                        return 0.0
+    return df
 
-                stat_war = parse_float(cells[col_map.get("WAR", -1)].get_text()) if col_map.get("WAR", -1) >= 0 else 0.0
-                stat_ops = parse_float(cells[col_map.get("OPS", -1)].get_text()) if col_map.get("OPS", -1) >= 0 else 0.0
-                stat_ops_plus = parse_float(cells[col_map.get("OPS+", -1)].get_text()) if col_map.get("OPS+", -1) >= 0 else 0.0
-                stat_slg = parse_float(cells[col_map.get("SLG", -1)].get_text()) if col_map.get("SLG", -1) >= 0 else 0.0
-
-                stats[name] = {
-                    "WAR": stat_war,
-                    "OPS": stat_ops,
-                    "SLG": stat_slg,
-                    "OPS+": stat_ops_plus,
-                    "dynasty_value": 0,  # Placeholder for later computed value
-                }
-
-        else:
-            print("Warning: Unsupported Content-Type for advanced stats")
-            return {}
-
-    except Exception as e:
-        print(f"Warning: Failed to fetch advanced stats: {e}")
-        return {}
-
-    return stats
-
-def merge_advanced_stats(combined_rankings, advanced_stats):
+def assign_ranks(df):
     """
-    Merge advanced stats into combined rankings dict.
+    Assign overall rank and positional rank based on dynasty_value.
     """
-    for player_name, stats in combined_rankings.items():
-        adv = advanced_stats.get(player_name, {})
-        for key in ["WAR", "OPS", "SLG", "OPS+"]:
-            stats[key] = adv.get(key, 0.0)
-        # dynasty_value can be calculated later or left as 0 for now
-        stats["dynasty_value"] = 0
-    return combined_rankings
+    df = df.copy()
+    df = df.sort_values("dynasty_value", ascending=False).reset_index(drop=True)
+    df["overall_rank"] = df.index + 1
 
-def export_combined_rankings_to_csv(combined_rankings, filename="dynasty_rankings_cleaned.csv"):
-    """
-    Export the combined rankings dictionary to a CSV file.
-    """
-    rows = []
-    for name, stats in combined_rankings.items():
-        row = {
-            "name": name,
-            "overall_rank": stats.get("overall_rank", 0),
-            "pos_rank": stats.get("pos_rank", 0),
-            "position": stats.get("position", ""),
-            "WAR": stats.get("WAR", 0),
-            "OPS": stats.get("OPS", 0),
-            "SLG": stats.get("SLG", 0),
-            "OPS+": stats.get("OPS+", 0),
-            "dynasty_value": stats.get("dynasty_value", 0),
-        }
-        rows.append(row)
+    # Positional ranks
+    df["pos_rank"] = df.groupby("position")["dynasty_value"].rank(method="min", ascending=False).astype(int)
 
-    df = pd.DataFrame(rows)
-    df.to_csv(filename, index=False)
-    print(f"Saved combined rankings to {filename}")
+    return df
 
+def main():
+    print("Loading and preparing data from all scrapers...")
+    dfs = []
+
+    # Load hitters data sources
+    hitters_sources = [
+        "cbssports",
+        "espn_hitters",
+        "fangraphs_hitters",
+        "fantasypros",
+        "fantraxhq",
+        "mlbpipeline",
+        "prospectslive",
+        "rotoballer",
+        "rotowire"
+    ]
+
+    # Load pitchers data sources
+    pitchers_sources = [
+        "espn_pitchers",
+        "fangraphs_pitchers",
+        "fantasypros",
+        "fantraxhq",
+        "pitcherlist",
+        "prospectslive",
+        "rotoballer",
+        "rotowire"
+    ]
+
+    # Prepare hitters dfs
+    for source in hitters_sources:
+        path = SCRAPER_FILES.get(source)
+        if not path:
+            continue
+        df = load_and_prepare(path, ["name", "overall_rank", "pos_rank", "position"] + HITTER_STATS)
+        dfs.append(df)
+
+    # Prepare pitchers dfs
+    for source in pitchers_sources:
+        path = SCRAPER_FILES.get(source)
+        if not path:
+            continue
+        df = load_and_prepare(path, ["name", "overall_rank", "pos_rank", "position"] + PITCHER_STATS)
+        dfs.append(df)
+
+    print(f"Loaded {len(dfs)} dataframes, merging now...")
+    combined = merge_dataframes(dfs)
+
+    print(f"Calculating dynasty values for {len(combined)} players...")
+    combined = calculate_dynasty_value(combined)
+
+    print("Assigning ranks...")
+    combined = assign_ranks(combined)
+
+    # Save final cleaned file
+    combined.to_csv("data/dynasty_rankings_cleaned.csv", index=False)
+    print(f"✅ Saved cleaned dynasty rankings ({len(combined)}) to data/dynasty_rankings_cleaned.csv")
+
+if __name__ == "__main__":
+    main()
