@@ -12,6 +12,14 @@ jobs:
       contents: write
       pull-requests: write
 
+    env:
+      # These are pulled in from GitHub repo secrets
+      LEAGUE_ID: ${{ secrets.LEAGUE_ID }}
+      SEASON_YEAR: ${{ secrets.SEASON_YEAR }}
+      SWID: ${{ secrets.SWID }}
+      ESPN_S2: ${{ secrets.ESPN_S2 }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
     steps:
       - name: "📥 Checkout Repo"
         uses: actions/checkout@v4

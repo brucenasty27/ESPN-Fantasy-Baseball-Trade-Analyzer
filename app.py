@@ -30,8 +30,8 @@ except Exception as e:
     st.error(f"Error loading environment variables: {e}")
     st.stop()
 
-# Initialize OpenAI client with new API interface
-openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
+# Initialize OpenAI client
+openai.api_key = OPENAI_API_KEY
 
 st.set_page_config(page_title="Dynasty Trade Analyzer", layout="wide")
 st.title("🏆 Dynasty Trade Analyzer with Draft Picks")
@@ -94,7 +94,7 @@ def ai_trade_verdict(team1_name, team2_name, players_1, players_2, value_1, valu
         msg += f"Team 2 ({team2_name}) trades {', '.join([p.name for p in players_2])}. "
         msg += f"Team 1 value: {value_1:.2f}, Team 2 value: {value_2:.2f}. Who wins the trade? Suggest fair modifications if any."
 
-        response = openai_client.chat.completions.create(
+        response = openai.ChatCompletion.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": "You are a fantasy baseball expert analyzing trade fairness."},
@@ -103,7 +103,7 @@ def ai_trade_verdict(team1_name, team2_name, players_1, players_2, value_1, valu
             temperature=0.7,
             max_tokens=250
         )
-        return response.choices[0].message.content.strip()
+        return response.choices[0].message['content'].strip()
     except Exception as e:
         return f"AI verdict unavailable: {e}"
 
@@ -125,7 +125,6 @@ def load_rankings_csv():
 
 rankings_df = load_rankings_csv()
 
-# Initialize session state variables if not set
 for key in ["trade_from_team_1", "trade_from_team_2", "trade_picks_team_1_rounds", "trade_picks_team_2_rounds"]:
     if key not in st.session_state:
         st.session_state[key] = []
