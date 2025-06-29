@@ -11,9 +11,7 @@ def clean_name(name):
     return name.strip().lower()
 
 def fetch_fangraphs_hitters():
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
+    headers = {"User-Agent": "Mozilla/5.0"}
     response = requests.get(URL, headers=headers)
     if response.status_code != 200:
         print(f"Failed to fetch {URL} (status {response.status_code})")
@@ -21,7 +19,6 @@ def fetch_fangraphs_hitters():
 
     soup = BeautifulSoup(response.text, "html.parser")
 
-    # Find the main data table
     table = soup.find("table", id="LeaderBoard1_dg1_ctl") or \
             soup.find("table", id="LeaderBoard1_dg1") or \
             soup.find("table")
@@ -50,7 +47,7 @@ def fetch_fangraphs_hitters():
         row_data = {}
         for i, cell in enumerate(cells):
             text = cell.get_text(strip=True)
-            # Clean player name in column 1 or if header includes "player"
+            # Clean player name if appropriate
             if i == 1 or 'player' in headers_row[i]:
                 a = cell.find("a")
                 if a:
@@ -61,7 +58,9 @@ def fetch_fangraphs_hitters():
 
     df = pd.DataFrame(rows)
 
-    # Map columns to your expected schema with hitting stats used in dynasty_value
+    # Lowercase all columns for consistent mapping
+    df.columns = [col.lower() for col in df.columns]
+
     col_map = {
         'player': 'name',
         'pos': 'position',
@@ -74,22 +73,22 @@ def fetch_fangraphs_hitters():
         'bb': 'BB',
     }
 
-    for old_col in list(df.columns):
-        col_lower = old_col.lower()
-        for key, new_col in col_map.items():
-            if key == col_lower and new_col not in df.columns:
-                df.rename(columns={old_col: new_col}, inplace=True)
+    df.rename(columns={k: v for k, v in col_map.items() if k in df.columns}, inplace=True)
 
-    # Ensure required columns exist
+    # Ensure required columns exist with default values
     for col in ['overall_rank', 'pos_rank', 'position', 'R', 'HR', 'RBI', 'SB', 'AVG', 'BB']:
         if col not in df.columns:
             df[col] = 0 if col != 'position' else ''
 
-    # Convert numeric columns with coercion
+    # Convert numeric columns
     numeric_cols = ['overall_rank', 'pos_rank', 'R', 'HR', 'RBI', 'SB', 'AVG', 'BB']
     for col in numeric_cols:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
+    # Optional: convert position to uppercase for consistency downstream
+    df['position'] = df['position'].str.upper()
+
+    # Return relevant columns, in consistent order
     return df[['name', 'overall_rank', 'pos_rank', 'position', 'R', 'HR', 'RBI', 'SB', 'AVG', 'BB']]
 
 if __name__ == "__main__":

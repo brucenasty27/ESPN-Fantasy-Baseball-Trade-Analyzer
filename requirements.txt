@@ -1,5 +1,5 @@
 # Streamlit App Core
-streamlit==1.32.0
+streamlit==1.33.0
 pandas==2.0.3
 requests==2.31.0
 python-dotenv==1.0.0
@@ -12,5 +12,5 @@ openai==0.27.0
 
 # Web scraping and parsing
 beautifulsoup4==4.12.2
-lxml==4.9.3
+lxml>=4.9.4,<5.0.0
 html5lib==1.1

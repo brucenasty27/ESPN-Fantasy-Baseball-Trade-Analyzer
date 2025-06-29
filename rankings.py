@@ -1,11 +1,11 @@
 import pandas as pd
 import os
-from scrapers.scrape_espn_hitters import fetch_espn_hitters
+from scrapers.scrape_espn_stats import fetch_espn_hitter_stats, fetch_espn_pitcher_stats
 from scrapers.scrape_fangraphs_pitchers import fetch_fangraphs_pitchers
+from scrapers.scrape_fangraphs_hitters import fetch_fangraphs_hitters
 
 RANKINGS_FILE = os.path.join("data", "dynasty_rankings_cleaned.csv")
 
-# Helper function to safely parse IP (e.g. 45.2 innings = 45 + 2/3)
 def parse_ip(ip_val):
     try:
         ip_float = float(ip_val)
@@ -19,31 +19,103 @@ def parse_ip(ip_val):
     except:
         return 0.0
 
-def fetch_all_sources():
-    hitters = fetch_espn_hitters()
-    pitchers = fetch_fangraphs_pitchers()
+def fetch_all_sources(league):
+    # Fetch ESPN hitters
+    try:
+        hitters_espn = fetch_espn_hitter_stats(league)
+    except Exception as e:
+        print(f"Error fetching ESPN hitters: {e}")
+        hitters_espn = pd.DataFrame()
 
-    if pitchers is not None and "IP" in pitchers.columns:
-        pitchers["IP"] = pitchers["IP"].apply(parse_ip)
+    # Fetch ESPN pitchers
+    try:
+        pitchers_espn = fetch_espn_pitcher_stats(league)
+    except Exception as e:
+        print(f"Error fetching ESPN pitchers: {e}")
+        pitchers_espn = pd.DataFrame()
 
-    combined = pd.concat([hitters, pitchers], ignore_index=True, sort=False).fillna(0)
+    if pitchers_espn is not None and "IP" in pitchers_espn.columns:
+        pitchers_espn["IP"] = pitchers_espn["IP"].apply(parse_ip)
 
-    combined["dynasty_value"] = combined.apply(lambda row: dynasty_value_pitcher(row) if row["position"] in ["SP", "RP", "P"] else dynasty_value_hitter(row), axis=1)
+    # Fetch Fangraphs hitters
+    try:
+        hitters_fg = fetch_fangraphs_hitters()
+    except Exception as e:
+        print(f"Error fetching Fangraphs hitters: {e}")
+        hitters_fg = pd.DataFrame()
 
-    # Fill default ranks if not present
-    if "overall_rank" not in combined:
+    # Fetch Fangraphs pitchers
+    try:
+        pitchers_fg = fetch_fangraphs_pitchers()
+    except Exception as e:
+        print(f"Error fetching Fangraphs pitchers: {e}")
+        pitchers_fg = pd.DataFrame()
+
+    if pitchers_fg is not None and "IP" in pitchers_fg.columns:
+        pitchers_fg["IP"] = pitchers_fg["IP"].apply(parse_ip)
+
+    return [hitters_espn, pitchers_espn, hitters_fg, pitchers_fg]
+
+def combine_rankings(dfs):
+    """
+    Combine multiple DataFrames of player rankings/stats into a single cleaned DataFrame.
+    """
+
+    # Filter out empty or None DataFrames
+    valid_dfs = [df for df in dfs if df is not None and not df.empty]
+
+    if not valid_dfs:
+        return pd.DataFrame()  # Return empty DataFrame if no valid data
+
+    # Concatenate all valid DataFrames
+    combined = pd.concat(valid_dfs, ignore_index=True, sort=False)
+
+    # Clean player names
+    combined["name"] = combined["name"].astype(str).str.strip().str.lower()
+
+    # Normalize position strings to uppercase and fill missing with empty string
+    combined["position"] = combined.get("position", "").astype(str).str.upper().fillna("")
+
+    # Parse IP for pitchers if exists
+    if "IP" in combined.columns:
+        combined["IP"] = combined["IP"].apply(parse_ip)
+
+    # Fill missing numeric values with 0
+    combined.fillna(0, inplace=True)
+
+    # Calculate dynasty_value for each row
+    def calc_dyn_val(row):
+        pos = row.get("position", "")
+        if pos in {"SP", "RP", "P"}:
+            return dynasty_value_pitcher(row)
+        else:
+            return dynasty_value_hitter(row)
+
+    combined["dynasty_value"] = combined.apply(calc_dyn_val, axis=1)
+
+    # Ensure default ranks exist
+    if "overall_rank" not in combined.columns:
         combined["overall_rank"] = 9999
-    if "pos_rank" not in combined:
+    if "pos_rank" not in combined.columns:
         combined["pos_rank"] = 9999
 
-    combined = combined[[
+    # Define expected columns and add missing with zeros
+    expected_cols = [
         "name", "dynasty_value", "overall_rank", "pos_rank", "position",
         "WAR", "OPS", "SLG", "OPS+",
         "HR", "R", "RBI", "SB", "AVG", "BB",
         "W", "SV", "K", "ERA", "WHIP", "IP"
-    ]].copy()
+    ]
+    for col in expected_cols:
+        if col not in combined.columns:
+            combined[col] = 0
 
+    # Return combined DataFrame with columns in expected order
+    combined = combined[expected_cols].copy()
+
+    # Save combined rankings to file
     combined.to_csv(RANKINGS_FILE, index=False)
+
     return combined
 
 def load_rankings():

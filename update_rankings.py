@@ -1,8 +1,7 @@
 import os
-import pandas as pd
 from dotenv import load_dotenv
 from espn_api.baseball import League
-from rankings import fetch_all_sources
+from rankings import fetch_all_sources, combine_rankings
 
 def load_espn_league():
     load_dotenv()
@@ -23,28 +22,26 @@ def load_espn_league():
         return None
 
 def update_rankings():
-    print("📊 Updating dynasty rankings...")
+    print("📊 Starting dynasty rankings update...")
 
     league = load_espn_league()
     if league is None:
         print("⚠️ Failed to initialize ESPN League. Aborting rankings update.")
         return
 
-    df = fetch_all_sources(league)
+    try:
+        dfs = fetch_all_sources(league)
+        combined_df = combine_rankings(dfs)
 
-    if df.empty:
-        print("⚠️ No data fetched. Rankings update aborted.")
-        return
+        if combined_df.empty:
+            print("⚠️ Combined rankings data is empty. Update aborted.")
+            return
 
-    if "name" not in df.columns:
-        print("❌ 'name' column not found in dataframe. Check scraper output.")
-        return
-
-    df["name"] = df["name"].astype(str).str.strip().str.lower()
-    df["position"] = df["position"].astype(str).str.upper()
-
-    print(f"✅ Rankings updated with {len(df)} players.")
-    print(df[["name", "dynasty_value", "position"]].head(10))
+        output_path = os.path.join("data", "dynasty_rankings_cleaned.csv")
+        combined_df.to_csv(output_path, index=False)
+        print(f"✅ Dynasty rankings successfully updated and saved to {output_path}")
+    except Exception as e:
+        print(f"❌ Error during rankings update: {e}")
 
 if __name__ == "__main__":
     update_rankings()

@@ -80,7 +80,7 @@ def calculate_trade_value(players, picks, pick_valuator=None, mode="simple", tea
 
 def refresh_rankings():
     try:
-        dfs = fetch_all_sources()
+        dfs = fetch_all_sources(load_league())
         df = combine_rankings(dfs)
         output_path = os.path.join("data", "dynasty_rankings_cleaned.csv")
         df.to_csv(output_path, index=False)
@@ -156,6 +156,7 @@ with st.sidebar:
         with st.spinner("Syncing league data..."):
             st.cache_resource.clear()
             league = load_league()
+            st.session_state.league = league
             st.session_state.last_sync = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         st.success(f"✅ League data synced at {st.session_state.last_sync}")
 
