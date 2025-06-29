@@ -1,18 +1,22 @@
 import streamlit as st
 from espn_api.baseball import League
-from draft_value import DraftPickValuator, DraftPick
+from draft_value import DraftPickValuator, DraftPickSimple
 from dataclasses import dataclass
 import datetime
 import os
 from dotenv import load_dotenv
 import pandas as pd
 import openai
+import logging
 
 from rankings import fetch_all_sources, combine_rankings, clean_player_name
 from player_value import get_dynasty_value, get_simple_draft_pick_value
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Configure logging for debug
+logging.basicConfig(level=logging.INFO)
 
 # Validate environment variables
 try:
@@ -30,11 +34,13 @@ except Exception as e:
     st.error(f"Error loading environment variables: {e}")
     st.stop()
 
-# Initialize OpenAI client
 openai.api_key = OPENAI_API_KEY
 
 st.set_page_config(page_title="Dynasty Trade Analyzer", layout="wide")
 st.title("🏆 Dynasty Trade Analyzer with Draft Picks")
+
+DRAFT_ROUNDS = 16
+NEXT_DRAFT_YEAR = SEASON_YEAR + 1
 
 @dataclass
 class DraftPickSimple:
@@ -47,22 +53,32 @@ class DraftPickSimple:
         )
         return f"{self.year} {self.round_number}{suffix} Round Pick"
 
-DRAFT_ROUNDS = 16
-NEXT_DRAFT_YEAR = SEASON_YEAR + 1
-
 @st.cache_resource(show_spinner=False)
-def load_league():
+def load_league_cached():
+    logging.info("Loading ESPN League data...")
     try:
-        league = League(
-            league_id=LEAGUE_ID,
-            year=SEASON_YEAR,
-            swid=SWID,
-            espn_s2=ESPN_S2
-        )
+        league = League(league_id=LEAGUE_ID, year=SEASON_YEAR, swid=SWID, espn_s2=ESPN_S2)
+        logging.info("League loaded successfully.")
         return league
     except Exception as e:
-        st.error(f"Failed to load league: {e}")
-        st.stop()
+        logging.error(f"Failed to load league: {e}")
+        return None
+
+@st.cache_data
+def load_rankings_csv(file_path="data/dynasty_rankings_cleaned.csv"):
+    if not os.path.exists(file_path):
+        st.warning(f"⚠️ Missing rankings file: {file_path}. Please run the ranking update workflow.")
+        return pd.DataFrame(columns=["name"])
+    try:
+        df = pd.read_csv(file_path)
+        if "name" not in df.columns:
+            st.warning(f"⚠️ Rankings CSV missing 'name' column: {file_path}")
+            return pd.DataFrame(columns=["name"])
+        df["name"] = df["name"].astype(str).str.strip().str.lower()
+        return df
+    except Exception as e:
+        st.warning(f"⚠️ Failed to load rankings CSV {file_path}: {e}")
+        return pd.DataFrame(columns=["name"])
 
 def get_team_logo(team):
     logo = getattr(team, "logo_url", "")
@@ -80,7 +96,8 @@ def calculate_trade_value(players, picks, pick_valuator=None, mode="simple", tea
 
 def refresh_rankings():
     try:
-        dfs = fetch_all_sources(load_league())
+        st.info("Refreshing dynasty rankings (this may take a moment)...")
+        dfs = fetch_all_sources(load_league_cached())
         df = combine_rankings(dfs)
         output_path = os.path.join("data", "dynasty_rankings_cleaned.csv")
         df.to_csv(output_path, index=False)
@@ -107,24 +124,19 @@ def ai_trade_verdict(team1_name, team2_name, players_1, players_2, value_1, valu
     except Exception as e:
         return f"AI verdict unavailable: {e}"
 
-@st.cache_data()
-def load_rankings_csv():
-    file = "data/dynasty_rankings_cleaned.csv"
-    if not os.path.exists(file):
-        st.warning(f"⚠️ Missing {file}. Please run the ranking update workflow.")
-        return pd.DataFrame(columns=["name"])
-    try:
-        df = pd.read_csv(file)
-        if "name" not in df.columns:
-            raise KeyError("Missing 'name' column in rankings CSV.")
-        df["name"] = df["name"].astype(str).str.strip().str.lower()
-        return df
-    except Exception as e:
-        st.warning(f"⚠️ Failed to load {file}: {e}")
-        return pd.DataFrame(columns=["name"])
+# Initialize or load league once and store in session state
+if "league" not in st.session_state:
+    league = load_league_cached()
+    if league is None:
+        st.error("Failed to load league data. Please check your ESPN credentials and network.")
+        st.stop()
+    st.session_state.league = league
+else:
+    league = st.session_state.league
 
 rankings_df = load_rankings_csv()
 
+# Initialize session state variables if missing
 for key in ["trade_from_team_1", "trade_from_team_2", "trade_picks_team_1_rounds", "trade_picks_team_2_rounds"]:
     if key not in st.session_state:
         st.session_state[key] = []
@@ -140,8 +152,7 @@ with st.sidebar:
     if st.button("🔄 Refresh Dynasty Rankings Now"):
         with st.spinner("Refreshing dynasty rankings..."):
             output = refresh_rankings()
-            st.success("Dynasty rankings refreshed.")
-            st.text(output)
+            st.success(output)
 
     st.markdown("---")
     mode = st.selectbox(
@@ -155,16 +166,13 @@ with st.sidebar:
     if st.button("🔄 Sync League Data Now"):
         with st.spinner("Syncing league data..."):
             st.cache_resource.clear()
-            league = load_league()
-            st.session_state.league = league
-            st.session_state.last_sync = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        st.success(f"✅ League data synced at {st.session_state.last_sync}")
-
-if "league" not in st.session_state or st.session_state.last_sync is None:
-    league = load_league()
-    st.session_state.league = league
-else:
-    league = st.session_state.league
+            league = load_league_cached()
+            if league is None:
+                st.error("Failed to reload league data.")
+            else:
+                st.session_state.league = league
+                st.session_state.last_sync = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                st.success(f"✅ League data synced at {st.session_state.last_sync}")
 
 if st.session_state.last_sync:
     st.caption(f"Last synced: {st.session_state.last_sync}")
@@ -197,7 +205,7 @@ with tab_trade:
 
     col1, col2 = st.columns(2)
     team_1_name = col1.selectbox("Select Team 1", team_names)
-    team_2_name = col2.selectbox("Select Team 2", team_names, index=1)
+    team_2_name = col2.selectbox("Select Team 2", team_names, index=1 if len(team_names) > 1 else 0)
 
     team_1 = next(t for t in league.teams if t.team_name == team_1_name)
     team_2 = next(t for t in league.teams if t.team_name == team_2_name)
@@ -214,8 +222,8 @@ with tab_trade:
     draft_picks_team_1 = st.multiselect("Team 1 Draft Picks", options=draft_pick_options)
     draft_picks_team_2 = st.multiselect("Team 2 Draft Picks", options=draft_pick_options)
 
-    players_1 = [roster_1[name] for name in trade_from_team_1]
-    players_2 = [roster_2[name] for name in trade_from_team_2]
+    players_1 = [roster_1[name] for name in trade_from_team_1 if name in roster_1]
+    players_2 = [roster_2[name] for name in trade_from_team_2 if name in roster_2]
 
     picks_1 = [DraftPickSimple(parse_pick_string(pick_str), NEXT_DRAFT_YEAR) for pick_str in draft_picks_team_1]
     picks_2 = [DraftPickSimple(parse_pick_string(pick_str), NEXT_DRAFT_YEAR) for pick_str in draft_picks_team_2]
