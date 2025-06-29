@@ -4,16 +4,13 @@ pandas==2.0.3
 requests==2.31.0
 python-dotenv==1.0.0
 
-# ESPN fantasy league integration
+# ESPN API
 espn_api==0.45.0
 
-# OpenAI integration
+# OpenAI Integration
 openai==0.27.0
 
-# Web scraping & parsing
+# Web scraping
 beautifulsoup4==4.12.2
-html5lib==1.1
-lxml>=4.9.4,<5.2.0  # Avoid build errors on Streamlit Cloud
-
-# Optional utility (for robust parsing/logging, if used)
-# rich==14.0.0
+html5lib==1.0.1  # Compatible + more stable
+lxml==4.9.3      # ✅ Prebuilt wheel — avoids build errors!
