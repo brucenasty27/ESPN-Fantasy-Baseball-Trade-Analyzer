@@ -34,11 +34,11 @@ def fetch_cbssports_rankings():
     dfs = []
     for table in tables:
         try:
-            df = pd.read_html(str(table))[0]
+            # Use flavor='html5lib' to avoid lxml dependency
+            df = pd.read_html(str(table), flavor='html5lib')[0]
             if "Player" not in df.columns:
                 continue
 
-            # Rename columns to standardized names, add missing with default 0
             rename_map = {
                 "Player": "name",
                 "Rank": "overall_rank",
@@ -53,27 +53,20 @@ def fetch_cbssports_rankings():
                 "K": "K",
                 "ERA": "ERA",
                 "WHIP": "WHIP",
-                # Position info if present
                 "Pos": "position"
             }
             df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
 
-            # Clean player names
             df["name"] = df["name"].apply(clean_name)
 
-            # Ensure all needed columns exist, fill missing with 0 or empty string for position
             required_cols = [
                 "overall_rank", "HR", "R", "RBI", "SB", "BB", "AVG",
                 "W", "SV", "K", "ERA", "WHIP", "position"
             ]
             for col in required_cols:
                 if col not in df.columns:
-                    if col == "position":
-                        df[col] = ""
-                    else:
-                        df[col] = 0
+                    df[col] = "" if col == "position" else 0
 
-            # Convert numeric columns to correct types, coerce errors to NaN then fill with 0
             numeric_cols = [
                 "overall_rank", "HR", "R", "RBI", "SB", "BB", "AVG",
                 "W", "SV", "K", "ERA", "WHIP"

@@ -2,6 +2,7 @@ import requests
 import pandas as pd
 from bs4 import BeautifulSoup
 import re
+import time
 
 BASE_URL = "https://www.pitcherlist.com/category/dynasty/"
 HEADERS = {
@@ -11,40 +12,72 @@ HEADERS = {
 def clean_player_name(name):
     if not isinstance(name, str):
         return ""
-    name = re.sub(r"\s*\(.*\)", "", name)
+    name = re.sub(r"\s*\(.*\)", "", name)  # remove anything in parentheses
     name = re.sub(r" Jr\.| Sr\.| III| II", "", name)
     return name.strip().lower()
 
-def fetch_pitcherlist_rankings():
-    try:
-        resp = requests.get(BASE_URL, headers=HEADERS, timeout=10)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
+def get_article_urls(category_url):
+    """Scrape the category page to get recent article URLs."""
+    resp = requests.get(category_url, headers=HEADERS)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
 
-        # Find the first table that likely contains rankings
-        table = soup.find("table")
-        if not table:
-            raise RuntimeError("PitcherList rankings table not found")
+    # Articles are typically in <h2 class="entry-title"><a href="...">
+    articles = soup.select("h2.entry-title a")
+    urls = [a['href'] for a in articles if a.has_attr('href')]
+    return urls
 
-        rows = table.find_all("tr")[1:]  # skip header
-        data = []
-        for row in rows:
-            cells = row.find_all(["td", "th"])
-            if len(cells) < 3:
-                continue
+def scrape_rankings_from_article(article_url):
+    """Extract player rankings from a single article page."""
+    resp = requests.get(article_url, headers=HEADERS)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    data = []
+    
+    # Look for tables in the article content
+    tables = soup.select("article table")
+    if not tables:
+        # Sometimes rankings might be in lists or other formats — add custom logic if needed
+        print(f"⚠️ No tables found in article {article_url}")
+        return pd.DataFrame()
+
+    for table in tables:
+        try:
+            df = pd.read_html(str(table))[0]
+        except Exception as e:
+            print(f"⚠️ Failed to parse a table in {article_url}: {e}")
+            continue
+        
+        # Try to identify columns with player info
+        # Common columns: Rank, Player, Position, Team, etc.
+        # Normalize column names to lowercase
+        df.columns = [str(c).strip().lower() for c in df.columns]
+
+        # Find likely columns
+        rank_col = next((c for c in df.columns if "rank" in c), None)
+        player_col = next((c for c in df.columns if "player" in c or "name" in c), None)
+        pos_col = next((c for c in df.columns if "pos" in c or "position" in c), None)
+
+        if not player_col or not rank_col:
+            print(f"⚠️ Table missing rank or player column in {article_url}, skipping.")
+            continue
+
+        # Build data rows
+        for _, row in df.iterrows():
             try:
-                rank = int(cells[0].text.strip())
-            except ValueError:
+                rank = int(row[rank_col])
+            except:
                 rank = 0
-            player_name = clean_player_name(cells[1].text.strip())
-            position = cells[2].text.strip()
+            player_name = clean_player_name(str(row[player_col]))
+            position = str(row[pos_col]) if pos_col in df.columns else ""
 
             data.append({
                 "name": player_name,
                 "overall_rank": rank,
                 "pos_rank": 0,
                 "position": position,
-                # Add placeholders for stats expected downstream
+                # Add placeholders for stats downstream or expand parsing as needed
                 "WAR": 0,
                 "ERA": 0,
                 "WHIP": 0,
@@ -52,101 +85,45 @@ def fetch_pitcherlist_rankings():
                 "dynasty_value": 0
             })
 
-        df = pd.DataFrame(data)
-        return df
+    if not data:
+        return pd.DataFrame()
+    return pd.DataFrame(data)
 
+def fetch_pitcherlist_dynasty_rankings():
+    print("Fetching PitcherList dynasty article URLs...")
+    try:
+        article_urls = get_article_urls(BASE_URL)
     except Exception as e:
-        print(f"Warning: Failed to fetch PitcherList rankings: {e}")
+        print(f"❌ Failed to fetch article URLs: {e}")
         return pd.DataFrame()
 
-def integrate_rankings(*dataframes):
-    """
-    Combine multiple player ranking DataFrames into one unified DataFrame.
+    all_rankings = []
+    for url in article_urls:
+        print(f"Scraping rankings from article: {url}")
+        try:
+            df = scrape_rankings_from_article(url)
+            if not df.empty:
+                all_rankings.append(df)
+            time.sleep(1)  # be polite
+        except Exception as e:
+            print(f"⚠️ Failed to scrape {url}: {e}")
 
-    Args:
-        *dataframes: variable number of pd.DataFrame inputs, each with columns including
-                     'name', 'overall_rank', 'position', and optionally stats like WAR, ERA, etc.
+    if not all_rankings:
+        print("❌ No rankings data found in any articles.")
+        return pd.DataFrame()
 
-    Returns:
-        pd.DataFrame: Combined, deduplicated DataFrame with best (lowest) overall_rank per player.
-    """
-    combined_df = pd.concat(dataframes, ignore_index=True)
+    combined_df = pd.concat(all_rankings, ignore_index=True)
 
-    # Normalize names
-    combined_df['name'] = combined_df['name'].astype(str).str.strip().str.lower()
+    # Deduplicate by player name, keep best rank (lowest number)
+    combined_df.sort_values(by="overall_rank", inplace=True)
+    combined_df = combined_df.drop_duplicates(subset=["name"], keep="first").reset_index(drop=True)
 
-    # Sort by overall_rank ascending so best ranks are first
-    combined_df = combined_df.sort_values(by='overall_rank')
-
-    # Deduplicate by player name, keeping the first occurrence (best rank)
-    combined_df = combined_df.drop_duplicates(subset=['name'], keep='first')
-
-    # Fill missing numeric columns with zeros
-    stat_cols = ['overall_rank', 'pos_rank', 'WAR', 'ERA', 'WHIP', 'K_per_9',
-                 'HR', 'R', 'RBI', 'SB', 'BB', 'AVG', 'W', 'SV', 'K', 'OPS', 'SLG', 'OPS+']
-    for col in stat_cols:
-        if col in combined_df.columns:
-            combined_df[col] = pd.to_numeric(combined_df[col], errors='coerce').fillna(0)
-        else:
-            combined_df[col] = 0
-
-    # Ensure position column exists
-    if 'position' not in combined_df.columns:
-        combined_df['position'] = ''
-
-    return combined_df.reset_index(drop=True)
-
+    return combined_df
 
 if __name__ == "__main__":
-    print("🔎 Fetching PitcherList rankings...")
-    df_pitcherlist = fetch_pitcherlist_rankings()
-
-    print("📥 Loading other rankings CSVs...")
-    # Load other scrapers' CSVs if they exist; skip if not
-    try:
-        df_fantrax = pd.read_csv("fantraxhq_rankings.csv")
-    except:
-        print("⚠️ fantraxhq_rankings.csv not found, skipping")
-        df_fantrax = pd.DataFrame()
-
-    try:
-        df_fantasypros = pd.read_csv("fantasypros_combined_rankings.csv")
-    except:
-        print("⚠️ fantasypros_combined_rankings.csv not found, skipping")
-        df_fantasypros = pd.DataFrame()
-
-    try:
-        df_cbssports = pd.read_csv("data/cbssports_rankings.csv")
-    except:
-        print("⚠️ cbssports_rankings.csv not found, skipping")
-        df_cbssports = pd.DataFrame()
-
-    try:
-        df_fangraphs_hitters = pd.read_csv("data/fangraphs_hitters.csv")
-    except:
-        print("⚠️ fangraphs_hitters.csv not found, skipping")
-        df_fangraphs_hitters = pd.DataFrame()
-
-    try:
-        df_fangraphs_pitchers = pd.read_csv("data/fangraphs_pitchers.csv")
-    except:
-        print("⚠️ fangraphs_pitchers.csv not found, skipping")
-        df_fangraphs_pitchers = pd.DataFrame()
-
-    # Combine Fangraphs hitters and pitchers if available
-    if not df_fangraphs_hitters.empty and not df_fangraphs_pitchers.empty:
-        df_fangraphs = pd.concat([df_fangraphs_hitters, df_fangraphs_pitchers], ignore_index=True)
+    df = fetch_pitcherlist_dynasty_rankings()
+    if not df.empty:
+        df.to_csv("data/pitcherlist_dynasty_rankings.csv", index=False)
+        print(f"✅ Saved PitcherList dynasty rankings for {len(df)} players to data/pitcherlist_dynasty_rankings.csv")
     else:
-        df_fangraphs = pd.DataFrame()
-
-    print("🔗 Integrating all rankings...")
-    combined_rankings = integrate_rankings(
-        df_pitcherlist,
-        df_fantrax,
-        df_fantasypros,
-        df_cbssports,
-        df_fangraphs
-    )
-
-    combined_rankings.to_csv("data/combined_dynasty_rankings.csv", index=False)
-    print(f"✅ Saved combined dynasty rankings for {len(combined_rankings)} players to data/combined_dynasty_rankings.csv")
+        print("❌ No PitcherList dynasty rankings scraped.")

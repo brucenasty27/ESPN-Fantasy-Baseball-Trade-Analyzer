@@ -10,7 +10,6 @@ espn_api==0.45.0
 # OpenAI Integration
 openai==0.27.0
 
-# Web scraping
+# Web scraping (no lxml)
 beautifulsoup4==4.12.2
-html5lib==1.0.1  # Compatible + more stable
-lxml==4.9.3      # ✅ Prebuilt wheel — avoids build errors!
+html5lib==1.1

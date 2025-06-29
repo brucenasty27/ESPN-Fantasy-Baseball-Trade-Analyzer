@@ -25,7 +25,8 @@ def scrape_fantasypros_table(url):
     if not table:
         raise ValueError(f"Could not find rankings table on {url}")
 
-    df = pd.read_html(str(table))[0]
+    # Use flavor='html5lib' to avoid lxml dependency
+    df = pd.read_html(str(table), flavor='html5lib')[0]
     return df
 
 def find_pos_rank_column(df):
@@ -43,14 +44,12 @@ def fetch_fantasypros_hitters(save_csv=False):
         df["name"] = df["name"].apply(clean_name)
         df["overall_rank"] = pd.to_numeric(df["overall_rank"], errors="coerce")
 
-        # Detect positional rank column
         pos_rank_col = find_pos_rank_column(df)
         if pos_rank_col:
             df["pos_rank"] = pd.to_numeric(df[pos_rank_col], errors="coerce").fillna(0).astype(int)
         else:
             df["pos_rank"] = 0
 
-        # Stats to include for hitters
         stat_map = {
             "HR": "HR",
             "R": "R",
@@ -59,7 +58,6 @@ def fetch_fantasypros_hitters(save_csv=False):
             "BB": "BB",
             "AVG": "AVG",
         }
-        # Add missing stat columns with 0
         for col in stat_map:
             if col in df.columns:
                 df.rename(columns={col: stat_map[col]}, inplace=True)
@@ -87,14 +85,12 @@ def fetch_fantasypros_pitchers(save_csv=False):
         df["name"] = df["name"].apply(clean_name)
         df["overall_rank"] = pd.to_numeric(df["overall_rank"], errors="coerce")
 
-        # Detect positional rank column
         pos_rank_col = find_pos_rank_column(df)
         if pos_rank_col:
             df["pos_rank"] = pd.to_numeric(df[pos_rank_col], errors="coerce").fillna(0).astype(int)
         else:
             df["pos_rank"] = 0
 
-        # Stats to include for pitchers
         stat_map = {
             "W": "W",
             "SV": "SV",
@@ -122,9 +118,8 @@ def fetch_fantasypros_pitchers(save_csv=False):
         return pd.DataFrame()
 
 if __name__ == "__main__":
-    # Standalone run: scrape both and save to CSV
     hitters = fetch_fantasypros_hitters(save_csv=True)
-    time.sleep(1)  # polite delay
+    time.sleep(1)
     pitchers = fetch_fantasypros_pitchers(save_csv=True)
 
     combined = pd.concat([hitters, pitchers], ignore_index=True)

@@ -21,7 +21,7 @@ def fetch_mlbpipeline_prospects():
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        # Find the prospects table, may need to confirm selector on site
+        # Confirm the correct selector here if table not found
         table = soup.find("table")
         if not table:
             raise RuntimeError("MLB Pipeline prospects table not found")
@@ -30,11 +30,11 @@ def fetch_mlbpipeline_prospects():
         data = []
         for row in rows:
             cells = row.find_all("td")
-            if len(cells) < 4:
+            if len(cells) < 3:  # Usually rank, name, position minimally
                 continue
             try:
                 rank = int(cells[0].text.strip())
-            except:
+            except ValueError:
                 rank = 0
             player_name = clean_player_name(cells[1].text.strip())
             position = cells[2].text.strip()
@@ -44,7 +44,7 @@ def fetch_mlbpipeline_prospects():
                 "overall_rank": rank,
                 "pos_rank": 0,
                 "position": position,
-                # Prospects usually have limited stats, so leave them blank or zero
+                # Placeholder stats for prospects
                 "WAR": 0,
                 "OPS": 0,
                 "SLG": 0,

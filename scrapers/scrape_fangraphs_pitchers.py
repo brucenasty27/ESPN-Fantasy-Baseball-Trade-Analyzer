@@ -1,63 +1,75 @@
-import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+import pandas as pd
+import re
 
-def parse_ip(ip_val):
-    try:
-        ip_float = float(ip_val)
-        whole = int(ip_float)
-        fraction = round(ip_float - whole, 1)
-        if fraction == 0.1:
-            return whole + 1/3
-        elif fraction == 0.2:
-            return whole + 2/3
-        return ip_float
-    except:
-        return 0.0
+URL = "https://www.fangraphs.com/fantasy-tools/player-rater?leaguetype=1&pos=&posType=pit"
+
+def clean_name(name):
+    name = re.sub(r"\s*\(.*\)", "", name)
+    name = re.sub(r" Jr\.| Sr\.| III| II", "", name)
+    return name.strip().lower()
 
 def fetch_fangraphs_pitchers():
-    url = "https://www.fangraphs.com/projections.aspx?pos=all&stats=pit&type=ros"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    response = requests.get(URL, headers=headers)
+    if response.status_code != 200:
+        print(f"Failed to fetch {URL} (status {response.status_code})")
+        return pd.DataFrame()
 
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
+    soup = BeautifulSoup(response.text, "html.parser")
+    table = soup.find("table", id="LeaderBoard1_dg1_ctl") or soup.find("table")
+    if not table:
+        print("Could not find pitcher ratings table on FanGraphs page")
+        return pd.DataFrame()
 
-        soup = BeautifulSoup(response.content, "html.parser")
-        table = soup.find("table")
+    thead = table.find("thead")
+    if not thead:
+        print("No <thead> found in table")
+        return pd.DataFrame()
 
-        if table is None or not table.find("thead"):
-            print("❌ No <thead> found in table. Fangraphs layout may have changed.")
-            return pd.DataFrame(columns=["name", "w", "sv", "k", "era", "whip", "ip", "position"])
+    headers_row = [th.get_text(strip=True).lower() for th in thead.find_all("th")]
 
-        df = pd.read_html(str(table))[0]
+    rows = []
+    tbody = table.find("tbody")
+    if not tbody:
+        print("No <tbody> found in table")
+        return pd.DataFrame()
 
-        # Clean column names: lowercase and underscores
-        df.rename(columns=lambda x: x.strip().lower().replace(' ', '_'), inplace=True)
+    for tr in tbody.find_all("tr"):
+        cells = tr.find_all("td")
+        if not cells or len(cells) != len(headers_row):
+            continue
+        row_data = {}
+        for i, cell in enumerate(cells):
+            text = cell.get_text(strip=True)
+            if i == 1 or "player" in headers_row[i]:
+                a = cell.find("a")
+                if a:
+                    text = a.get_text(strip=True)
+                text = clean_name(text)
+            row_data[headers_row[i]] = text
+        rows.append(row_data)
 
-        # Normalize expected fields
-        df["name"] = df["name"].astype(str).str.strip()
-        df["position"] = "P"
+    df = pd.DataFrame(rows)
+    col_map = {
+        "player": "name", "pos": "position", "r": "R", "era": "ERA",
+        "whip": "WHIP", "k": "K", "sv": "SV", "ip": "IP", "rank": "overall_rank"
+    }
+    for old_col, new_col in col_map.items():
+        if old_col in df.columns and new_col not in df.columns:
+            df.rename(columns={old_col: new_col}, inplace=True)
 
-        expected_cols = ["name", "w", "sv", "k", "era", "whip", "ip", "position"]
-        for col in expected_cols:
-            if col not in df.columns:
-                df[col] = 0
+    for col in ['overall_rank', 'pos_rank', 'position', 'W', 'SV', 'K', 'ERA', 'WHIP', 'IP']:
+        if col not in df.columns:
+            df[col] = 0
 
-        # Convert numeric columns
-        num_cols = ["w", "sv", "k", "era", "whip", "ip"]
-        for col in num_cols:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    numeric_cols = ['overall_rank', 'pos_rank', 'W', 'SV', 'K', 'ERA', 'WHIP', 'IP']
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-        # Parse innings pitched fractional parts properly
-        df["ip"] = df["ip"].apply(parse_ip)
-
-        return df[expected_cols]
-
-    except Exception as e:
-        print(f"Error fetching pitchers from Fangraphs: {e}")
-        return pd.DataFrame(columns=["name", "w", "sv", "k", "era", "whip", "ip", "position"])
+    return df[['name', 'overall_rank', 'pos_rank', 'position', 'W', 'SV', 'K', 'ERA', 'WHIP', 'IP']]
 
 if __name__ == "__main__":
     df = fetch_fangraphs_pitchers()
-    print(f"Fetched {len(df)} pitchers from Fangraphs")
-    df.to_csv("data/fangraphs_pitchers.csv", index=False)
+    print(f"Fetched {len(df)} pitchers")
